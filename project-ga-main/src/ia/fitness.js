@@ -1,19 +1,16 @@
 export function computeFitness(metrics) {
-  const reachedGoalBonus = metrics.reachedGoal && !metrics.fell ? 5000 : 0;
-  const fallPenalty = metrics.fell ? 1200 : 0;
+  const reachedGoalBonus = metrics.reachedGoal && !metrics.failed ? 4500 : 0;
+  const fallPenalty = metrics.failed ? 1800 : 0;
 
   const fitness =
-    metrics.validDistance * 6 +
-    metrics.stepsAlive * 0.4 +
-    metrics.progress * 400 +
+    metrics.validDistance * 8 +
+    metrics.aliveSteps * 0.3 +
+    metrics.gaitQualityAverage * 100 +
     reachedGoalBonus -
-    fallPenalty -
-    (metrics.lowBodyPenalty ?? 0) -
-    (metrics.rotationPenalty ?? 0) -
-    (metrics.backwardPenalty ?? 0) -
+    (metrics.instabilityPenalty ?? 0) -
+    (metrics.energyPenalty ?? 0) -
     (metrics.stagnationPenalty ?? 0) -
-    (metrics.dragPenalty ?? 0) -
-    (metrics.energyPenalty ?? 0);
+    fallPenalty;
 
   return Number.isFinite(fitness) ? fitness : -9999;
 }

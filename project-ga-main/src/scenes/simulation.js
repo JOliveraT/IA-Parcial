@@ -1,189 +1,252 @@
-import Matter from 'matter-js';
 import { IA_CONFIG } from '../ia/config';
-import { randomChromosome } from '../ia/chromosome';
+import { randomChromosome, decodeChromosome } from '../ia/chromosome';
 import { computeFitness } from '../ia/fitness';
 import { tournamentSelection } from '../ia/selection';
 import { blxAlpha } from '../ia/crossover';
 import { mutateGaussianBounded } from '../ia/mutation';
 import { hillClimbElite } from '../ia/localSearch';
-import { createWorld } from '../physics/world';
-import { createGround } from '../physics/ground';
-import { Creature } from '../physics/creature';
 
-const { Engine, Composite, Render, Events } = Matter;
-const MAX_BODY_ANGLE = (70 * Math.PI) / 180;
+const WALKER = { torsoW: 54, torsoH: 78, femur: 54, tibia: 52, groundY: 480 };
+
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+const norm = (v, lo, hi) => clamp((v - lo) / (hi - lo), 0, 1);
+
+function currentGoal(generation) {
+  return Math.min(IA_CONFIG.goalX, 400 + generation * 12);
+}
+
+function poseAt(genes, time) {
+  const phase = time * genes.stepFrequency;
+  const leftHip = genes.hipBias + genes.hipAmplitude * Math.sin(phase);
+  const rightHip = genes.hipBias + genes.hipAmplitude * Math.sin(phase + genes.phaseOffset);
+  const leftKnee = genes.kneeBias + genes.kneeAmplitude * Math.max(0, Math.sin(phase + genes.kneePhase));
+  const rightKnee = genes.kneeBias + genes.kneeAmplitude * Math.max(0, Math.sin(phase + genes.phaseOffset + genes.kneePhase));
+  const bodyPitch = genes.bodyPitchBias + genes.bodyPitchAmplitude * Math.sin(phase);
+  return { phase, leftHip, rightHip, leftKnee, rightKnee, bodyPitch };
+}
+
+function evaluateOne(chromosome, generation) {
+  const g = decodeChromosome(chromosome);
+  const localGoal = currentGoal(generation);
+  let x = IA_CONFIG.startX;
+  let bestX = x;
+  let prevX = x;
+  let gaitSum = 0;
+  let instabilityPenalty = 0;
+  let energyPenalty = 0;
+  let stagnationFrames = 0;
+  let lowGaitFrames = 0;
+  let aliveSteps = 0;
+  let failed = false;
+
+  for (let step = 0; step < IA_CONFIG.maxSteps; step += 1) {
+    const time = step * IA_CONFIG.fixedDeltaSeconds;
+    const pose = poseAt(g, time);
+
+    const alternation = 1 - Math.abs(Math.PI - Math.abs(pose.leftHip - pose.rightHip)) / Math.PI;
+    const hipScore = norm(g.hipAmplitude, 0.25, 0.75);
+    const kneeFlexion = (norm(pose.leftKnee, 0.25, 1.0) + norm(pose.rightKnee, 0.25, 1.0)) / 2;
+    const stabilityScore = 1 - norm(Math.abs(pose.bodyPitch), 0.15, 0.75);
+    const contactScore = 0.5 + 0.5 * Math.sin(pose.phase) * Math.sin(pose.phase + g.phaseOffset + Math.PI);
+    const strideScore = norm(g.strideLength, 45, 130);
+
+    const instability = Math.max(0, Math.abs(pose.bodyPitch) - 0.58) * 16;
+    const energy = (Math.abs(pose.leftHip) + Math.abs(pose.rightHip) + pose.leftKnee + pose.rightKnee) * g.energyFactor * 0.5;
+
+    const gaitQuality =
+      alternation * 1.1 +
+      hipScore * 0.7 +
+      kneeFlexion * 0.85 +
+      strideScore * 0.55 +
+      stabilityScore * g.stabilityFactor +
+      contactScore * 0.35 -
+      energy * 0.18 -
+      instability;
+
+    const speed = Math.max(0, gaitQuality) * (g.strideLength * 0.035);
+    x += speed;
+    bestX = Math.max(bestX, x);
+    gaitSum += gaitQuality;
+    instabilityPenalty += Math.max(0, instability) * 6;
+    energyPenalty += Math.max(0, energy) * 2.2;
+
+    if (x <= prevX + 0.03) stagnationFrames += 1;
+    else stagnationFrames = 0;
+    prevX = x;
+
+    if (gaitQuality < 0.22) lowGaitFrames += 1;
+    else lowGaitFrames = 0;
+
+    const invalidLeg = g.kneeBias + g.kneeAmplitude > 2.2 || g.hipAmplitude < 0.18;
+    const shouldFail =
+      Math.abs(pose.bodyPitch) > 0.8 ||
+      stabilityScore < 0.05 ||
+      lowGaitFrames > 100 ||
+      stagnationFrames > 120 ||
+      invalidLeg ||
+      energy > 2.3;
+
+    aliveSteps = step + 1;
+    if (shouldFail) { failed = true; break; }
+    if (x >= IA_CONFIG.goalX) break;
+  }
+
+  const validDistance = failed ? Math.max(0, bestX - IA_CONFIG.startX) * 0.2 : Math.max(0, bestX - IA_CONFIG.startX);
+  const gaitQualityAverage = gaitSum / Math.max(1, aliveSteps);
+  const progressGap = Math.max(0, localGoal - bestX);
+  const stagnationPenalty = stagnationFrames * 2 + progressGap * 0.3;
+  const reachedGoal = !failed && bestX >= IA_CONFIG.goalX;
+
+  const fitness = computeFitness({ validDistance, aliveSteps, gaitQualityAverage, reachedGoal, failed, instabilityPenalty, energyPenalty, stagnationPenalty });
+
+  return { chromosome: [...chromosome], genes: g, fitness, distance: validDistance, reachedGoal, failed };
+}
 
 export function createSimulation(statsRef) {
-  const visual = createWorld({ headless: false });
-  const visualGround = createGround(visual.world);
-  const groundTopY = visualGround.position.y - (visualGround.bounds.max.y - visualGround.bounds.min.y) / 2;
-
-  let population = [];
+  const canvas = document.getElementById('world');
+  const ctx = canvas.getContext('2d');
   let running = false;
-  let replayTimer = null;
+  let population = [];
   let bestEver = null;
   let plateauCount = 0;
+  let generation = 0;
+  let shown = null;
+  let viewTime = 0;
+  let cameraX = 0;
 
-  attachMarkerOverlay(visual.render);
-
-  function setStatus(status) { statsRef.value = { ...statsRef.value, status }; }
-
-  function attachMarkerOverlay(render) {
-    Events.on(render, 'afterRender', () => {
-      const ctx = render.context;
-      const b = render.bounds;
-      const w = render.options.width;
-      const h = render.options.height;
-      const xMap = (x) => ((x - b.min.x) / (b.max.x - b.min.x)) * w;
-      drawMarker(ctx, xMap(IA_CONFIG.startX), h - 108, '#2a9d8f', 'A');
-      drawMarker(ctx, xMap(IA_CONFIG.goalX), h - 108, '#d62828', 'B');
-    });
-  }
-
-  function drawMarker(ctx, x, y, color, label) {
-    ctx.save(); ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = 3;
-    ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y - 90); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(x, y - 90); ctx.lineTo(x + 26, y - 78); ctx.lineTo(x, y - 66); ctx.closePath(); ctx.fill();
-    ctx.fillStyle = '#111827'; ctx.font = 'bold 16px Inter, sans-serif'; ctx.fillText(label, x - 5, y - 96); ctx.restore();
-  }
+  function resize() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
+  resize();
+  window.addEventListener('resize', resize);
 
   function resetPopulation() {
-    population = Array.from({ length: IA_CONFIG.populationSize }, () => ({ genes: randomChromosome(), fitness: 0, distance: 0, reachedGoal: false }));
-    bestEver = null; plateauCount = 0;
-    statsRef.value = { generation: 0, bestDistance: 0, reachedGoal: false, bestFitness: 0, status: 'Pausado' };
-    renderBest(population[0].genes);
+    population = Array.from({ length: IA_CONFIG.populationSize }, () => ({ chromosome: randomChromosome(), fitness: 0 }));
+    generation = 0; bestEver = null; shown = null; plateauCount = 0;
+    statsRef.value = { generation: 0, bestDistance: 0, status: 'Pausado' };
   }
 
-  function clearActors(world) {
-    Composite.remove(world, Composite.allBodies(world).filter((b) => !b.isStatic), true);
-    Composite.remove(world, Composite.allConstraints(world).filter((c) => !(c.bodyA?.isStatic && c.bodyB?.isStatic)), true);
-  }
-
-  function evaluateOne(genes) {
-    const h = createWorld({ headless: true });
-    const g = createGround(h.world);
-    const gTopY = g.position.y - (g.bounds.max.y - g.bounds.min.y) / 2;
-    const creature = new Creature(h.world, genes, { startX: IA_CONFIG.startX, groundTopY: gTopY });
-
-    let validBestX = IA_CONFIG.startX;
-    let rawBestX = IA_CONFIG.startX;
-    let lowBodyPenalty = 0; let rotationPenalty = 0; let energyPenalty = 0;
-    let stagnation = 0; let lastBestX = IA_CONFIG.startX;
-    let step = 0; let fell = false; let reachedGoal = false;
-
-    for (; step < IA_CONFIG.maxSteps; step++) {
-      creature.update(IA_CONFIG.fixedDelta);
-      Engine.update(h.engine, IA_CONFIG.fixedDelta);
-      const torso = creature.body;
-
-      const torsoTouchesGround = creature.isTorsoTouchingGround(gTopY, 2);
-      const tooLow = torso.position.y > gTopY - 28;
-      const rotatedOut = Math.abs(torso.angle) > MAX_BODY_ANGLE;
-      const stagnant = step > 120 && stagnation > 100;
-      const fallen = torsoTouchesGround || tooLow || rotatedOut || stagnant;
-
-      rawBestX = Math.max(rawBestX, torso.position.x);
-      if (!fallen) validBestX = Math.max(validBestX, torso.position.x);
-
-      if (torso.position.x > lastBestX + 0.5) { lastBestX = torso.position.x; stagnation = 0; } else stagnation += 1;
-
-      if (torso.position.y > gTopY - 40) lowBodyPenalty += 1.8;
-      if (Math.abs(torso.angle) > 0.75) rotationPenalty += 1.2;
-      energyPenalty += creature.controlEffort * 0.06;
-
-      reachedGoal = torso.position.x >= IA_CONFIG.goalX && !fallen && !torsoTouchesGround && torso.position.y < gTopY - 34;
-      if (fallen) { fell = true; reachedGoal = false; break; }
-      if (reachedGoal) break;
+  function nextPopulation(sorted) {
+    const elites = sorted.slice(0, IA_CONFIG.eliteSize).map((e) => ({ chromosome: [...e.chromosome], fitness: 0 }));
+    const out = [...elites];
+    while (out.length < IA_CONFIG.populationSize) {
+      const immigrant = plateauCount >= IA_CONFIG.plateauLimit && Math.random() < IA_CONFIG.randomImmigrantRate;
+      if (immigrant) { out.push({ chromosome: randomChromosome(), fitness: 0 }); continue; }
+      const a = tournamentSelection(sorted, IA_CONFIG.tournamentSize);
+      const b = tournamentSelection(sorted, IA_CONFIG.tournamentSize);
+      const child = mutateGaussianBounded(blxAlpha(a.chromosome, b.chromosome, IA_CONFIG.crossoverAlpha), IA_CONFIG);
+      out.push({ chromosome: child, fitness: 0 });
     }
-
-    const validDistance = Math.max(0, validBestX - IA_CONFIG.startX);
-    const dragDistance = Math.max(0, rawBestX - validBestX);
-    const backwardPenalty = Math.max(0, IA_CONFIG.startX - creature.body.position.x) * 1.5;
-
-    const fitness = computeFitness({
-      validDistance,
-      stepsAlive: step,
-      reachedGoal,
-      fell,
-      lowBodyPenalty,
-      rotationPenalty,
-      backwardPenalty,
-      stagnationPenalty: stagnation * 0.35,
-      dragPenalty: dragDistance * 8,
-      energyPenalty,
-      progress: validDistance / Math.max(1, IA_CONFIG.goalX - IA_CONFIG.startX),
-    });
-    return { fitness, distance: validDistance, reachedGoal };
+    return out;
   }
 
-  function runGeneration() {
-    population.forEach((p) => Object.assign(p, evaluateOne(p.genes)));
-    population.sort((a, b) => b.fitness - a.fitness);
-    let best = population[0];
+  function trainGeneration() {
+    const evaluated = population.map((p) => evaluateOne(p.chromosome, generation));
+    evaluated.sort((a, b) => b.fitness - a.fitness);
 
-    if (!bestEver || best.fitness > bestEver.fitness) {
-      bestEver = { ...best, genes: [...best.genes] };
-      plateauCount = 0;
-    } else plateauCount += 1;
+    if (!bestEver || evaluated[0].fitness > bestEver.fitness) { bestEver = { ...evaluated[0], chromosome: [...evaluated[0].chromosome] }; plateauCount = 0; }
+    else plateauCount += 1;
 
-    const nextGenerationIdx = statsRef.value.generation + 1;
-    if (nextGenerationIdx % IA_CONFIG.hillClimbEvery === 0) {
-      const improved = hillClimbElite(best, (genes) => evaluateOne(genes).fitness, IA_CONFIG);
-      if (improved.improved && improved.elite.fitness > best.fitness) {
-        best = { ...best, genes: improved.elite.genes, fitness: improved.elite.fitness };
-        population[0] = best;
+    if ((generation + 1) % IA_CONFIG.hillClimbEvery === 0) {
+      const improved = hillClimbElite(evaluated[0], (ch) => evaluateOne(ch, generation).fitness, IA_CONFIG);
+      if (improved.improved) {
+        const reEval = evaluateOne(improved.elite.chromosome, generation);
+        if (reEval.fitness > evaluated[0].fitness) evaluated[0] = reEval;
       }
     }
 
-    statsRef.value = { ...statsRef.value, generation: nextGenerationIdx, bestDistance: best.distance, bestFitness: best.fitness, reachedGoal: best.reachedGoal };
-    renderBest(best.genes);
+    shown = evaluated[0];
+    generation += 1;
+    statsRef.value = {
+      generation,
+      bestDistance: shown.distance,
+      status: shown.reachedGoal ? 'Meta alcanzada' : running ? 'Entrenando' : 'Pausado',
+    };
 
-    if (best.reachedGoal) { running = false; setStatus('Meta alcanzada'); return; }
-    if (nextGenerationIdx >= IA_CONFIG.maxGenerations) { running = false; setStatus('Máximo alcanzado'); return; }
-
-    const next = [...population.slice(0, IA_CONFIG.eliteSize).map((e) => ({ ...e, genes: [...e.genes] }))];
-    while (next.length < IA_CONFIG.populationSize) {
-      const immigrant = plateauCount >= IA_CONFIG.plateauLimit && Math.random() < IA_CONFIG.randomImmigrantRate;
-      if (immigrant) { next.push({ genes: randomChromosome(), fitness: 0, distance: 0, reachedGoal: false }); continue; }
-      const a = tournamentSelection(population, IA_CONFIG.tournamentSize);
-      const b = tournamentSelection(population, IA_CONFIG.tournamentSize);
-      const child = mutateGaussianBounded(blxAlpha(a.genes, b.genes, IA_CONFIG.crossoverAlpha), IA_CONFIG);
-      next.push({ genes: child, fitness: 0, distance: 0, reachedGoal: false });
+    if (shown.reachedGoal || generation >= IA_CONFIG.maxGenerations) {
+      running = false;
+      statsRef.value = { ...statsRef.value, status: shown.reachedGoal ? 'Meta alcanzada' : 'Máximo alcanzado' };
+      return;
     }
-    population = next;
+    population = nextPopulation(evaluated);
   }
 
-  function stopReplay() { if (replayTimer) clearInterval(replayTimer); replayTimer = null; }
+  function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const targetX = shown ? IA_CONFIG.startX + shown.distance : IA_CONFIG.startX;
+    cameraX += ((targetX - 260) - cameraX) * 0.08;
 
-  function renderBest(genes) {
-    stopReplay(); clearActors(visual.world);
-    const creature = new Creature(visual.world, genes, { startX: IA_CONFIG.startX, groundTopY });
-    let steps = 0;
-    replayTimer = setInterval(() => {
-      creature.update(IA_CONFIG.fixedDelta);
-      const torso = creature.body;
-      const fallen = creature.isTorsoTouchingGround(groundTopY, 2) || torso.position.y > groundTopY - 28 || Math.abs(torso.angle) > MAX_BODY_ANGLE;
-      if (fallen || steps >= IA_CONFIG.bestReplaySteps) { stopReplay(); clearActors(visual.world); return; }
-      const left = Math.max(0, torso.position.x - 340);
-      Render.lookAt(visual.render, { min: { x: left, y: 0 }, max: { x: left + window.innerWidth, y: window.innerHeight } });
-      steps += 1;
-    }, IA_CONFIG.fixedDelta);
+    ctx.fillStyle = '#e9f2fb'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    const gy = WALKER.groundY;
+    ctx.strokeStyle = '#3f3f46'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(canvas.width, gy); ctx.stroke();
+
+    const toScreenX = (x) => x - cameraX;
+    const drawMarker = (x, label, color) => {
+      const sx = toScreenX(x);
+      ctx.strokeStyle = color; ctx.fillStyle = color;
+      ctx.beginPath(); ctx.moveTo(sx, gy); ctx.lineTo(sx, gy - 95); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(sx, gy - 95); ctx.lineTo(sx + 22, gy - 82); ctx.lineTo(sx, gy - 69); ctx.fill();
+      ctx.fillStyle = '#111827'; ctx.font = 'bold 16px Inter'; ctx.fillText(label, sx - 5, gy - 104);
+    };
+    drawMarker(IA_CONFIG.startX, 'A', '#2a9d8f'); drawMarker(IA_CONFIG.goalX, 'B', '#dc2626');
+
+    if (shown) {
+      viewTime += IA_CONFIG.fixedDeltaSeconds;
+      const p = poseAt(shown.genes, viewTime);
+      const hipX = IA_CONFIG.startX + shown.distance * Math.min(1, viewTime / 2.4);
+      const torsoCenterX = toScreenX(hipX);
+      const torsoCenterY = gy - WALKER.femur - WALKER.tibia + 10;
+      const hipY = torsoCenterY + WALKER.torsoH / 2 - 6;
+
+      const leg = (hipAngle, kneeAngle, side) => {
+        const offset = side * 10;
+        const x0 = torsoCenterX + offset;
+        const y0 = hipY;
+        const t1 = Math.PI / 2 + hipAngle;
+        const kx = x0 + Math.cos(t1) * WALKER.femur;
+        const ky = y0 + Math.sin(t1) * WALKER.femur;
+        const t2 = t1 + kneeAngle * 0.8;
+        const fx = kx + Math.cos(t2) * WALKER.tibia;
+        const fy = Math.min(gy, ky + Math.sin(t2) * WALKER.tibia);
+        return { x0, y0, kx, ky, fx, fy };
+      };
+
+      const left = leg(p.leftHip, p.leftKnee, -1);
+      const right = leg(p.rightHip, p.rightKnee, 1);
+
+      ctx.save();
+      ctx.translate(torsoCenterX, torsoCenterY);
+      ctx.rotate(p.bodyPitch * 0.55);
+      ctx.fillStyle = '#2563eb';
+      ctx.beginPath();
+      ctx.rect(-WALKER.torsoW / 2, -WALKER.torsoH / 2, WALKER.torsoW, WALKER.torsoH);
+      ctx.fill();
+      ctx.restore();
+
+      const drawLeg = (L, color) => {
+        ctx.strokeStyle = color; ctx.lineWidth = 7; ctx.lineCap = 'round';
+        ctx.beginPath(); ctx.moveTo(L.x0, L.y0); ctx.lineTo(L.kx, L.ky); ctx.lineTo(L.fx, L.fy); ctx.stroke();
+        ctx.fillStyle = '#111827'; ctx.beginPath(); ctx.arc(L.kx, L.ky, 4, 0, Math.PI * 2); ctx.fill();
+      };
+      drawLeg(left, '#374151'); drawLeg(right, '#1f2937');
+    }
+
+    requestAnimationFrame(draw);
   }
 
-  async function loop() {
-    if (!running) return;
-    runGeneration();
-    if (!running) return;
-    await new Promise((r) => setTimeout(r, IA_CONFIG.generationReplayPauseMs));
-    if (running) requestAnimationFrame(loop);
+  async function trainLoop() {
+    while (running) {
+      trainGeneration();
+      await new Promise((r) => setTimeout(r, IA_CONFIG.generationReplayPauseMs));
+    }
   }
 
   resetPopulation();
+  draw();
 
   return {
-    start() { if (running || statsRef.value.reachedGoal) return; running = true; setStatus('Entrenando'); loop(); },
-    pause() { running = false; setStatus(statsRef.value.reachedGoal ? 'Meta alcanzada' : 'Pausado'); },
-    reset() { running = false; stopReplay(); clearActors(visual.world); resetPopulation(); },
-    showBestNow() { if (bestEver) renderBest(bestEver.genes); },
+    start() { if (running) return; running = true; statsRef.value = { ...statsRef.value, status: 'Entrenando' }; trainLoop(); },
+    pause() { running = false; statsRef.value = { ...statsRef.value, status: 'Pausado' }; },
+    reset() { running = false; viewTime = 0; resetPopulation(); },
+    showBestNow() { if (bestEver) shown = bestEver; },
   };
 }
