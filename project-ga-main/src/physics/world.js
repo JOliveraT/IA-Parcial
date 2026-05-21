@@ -1,36 +1,23 @@
-import Matter from 'matter-js'
+import Matter from 'matter-js';
 
-const {
-  Engine,
-  Render,
-  Runner,
-  World
-} = Matter
+const { Engine, Render, Runner } = Matter;
 
-export function createWorld() {
+export function createWorld({ headless = false } = {}) {
+  const engine = Engine.create();
+  let render = null;
+  let runner = null;
 
-  const engine = Engine.create()
-
-  const canvas = document.getElementById('world')
-
-  const render = Render.create({
-    canvas,
-    engine,
-    options: {
-      width: window.innerWidth,
-      height: window.innerHeight,
-      wireframes: false,
-      background: '#222'
-    }
-  })
-
-  Render.run(render)
-
-  const runner = Runner.create()
-  Runner.run(runner, engine)
-
-  return {
-    engine,
-    world: engine.world
+  if (!headless) {
+    const canvas = document.getElementById('world');
+    render = Render.create({
+      canvas,
+      engine,
+      options: { width: window.innerWidth, height: window.innerHeight, wireframes: false, background: '#222' },
+    });
+    Render.run(render);
+    runner = Runner.create();
+    Runner.run(runner, engine);
   }
+
+  return { engine, world: engine.world, render, runner };
 }

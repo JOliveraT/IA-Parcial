@@ -1,150 +1,67 @@
-import Matter from "matter-js";
+import Matter from 'matter-js';
+import { decodeChromosome } from '../ia/chromosome';
 
 const { Bodies, Constraint, Composite, Body } = Matter;
-const CREATURE_COLORS = {
-  body: "#ff7043",
-  thigh: "#42a5f5",
-  calf: "#26a69a",
-  joint: "#eceff1",
-};
 
 export class Creature {
-  constructor(world, x, y, genes) {
+  constructor(world, x, y, chromosome) {
     this.world = world;
-    this.genes = genes;
+    this.chromosome = chromosome;
+    this.params = decodeChromosome(chromosome);
     this.startX = x;
     this.time = 0;
+    this.controlEffort = 0;
 
     this.createBody(x, y);
   }
 
   createBody(x, y) {
-    // Cuerpo principal
-    this.body = Bodies.rectangle(x, y, 60, 20, {
-      friction: 0.8,
-      render: {
-        fillStyle: CREATURE_COLORS.body,
-      },
-    });
-    // Pierna1
-    this.leg1 = Bodies.rectangle(x - 20, y + 40, 10, 50, {
-      friction: 1,
-      render: {
-        fillStyle: CREATURE_COLORS.thigh,
-      },
-    });
-    // Pierna2
-    this.leg2 = Bodies.rectangle(x + 20, y + 40, 10, 50, {
-      friction: 1,
-      render: {
-        fillStyle: CREATURE_COLORS.thigh,
-      },
-    });
-    // Pantorrilla1
-    this.calf1 = Bodies.rectangle(x - 20, y + 90, 9, 45, {
-      friction: 1,
-      render: {
-        fillStyle: CREATURE_COLORS.calf,
-      },
-    });
-    // Pantorrilla2
-    this.calf2 = Bodies.rectangle(x + 20, y + 90, 9, 45, {
-      friction: 1,
-      render: {
-        fillStyle: CREATURE_COLORS.calf,
-      },
-    });
+    this.body = Bodies.rectangle(x, y, 60, 20, { friction: 0.8, render: { fillStyle: '#ff7043' } });
+    this.leg1 = Bodies.rectangle(x - 20, y + 40, 10, 50, { friction: 1, render: { fillStyle: '#42a5f5' } });
+    this.leg2 = Bodies.rectangle(x + 20, y + 40, 10, 50, { friction: 1, render: { fillStyle: '#42a5f5' } });
+    this.calf1 = Bodies.rectangle(x - 20, y + 90, 9, 45, { friction: 1, render: { fillStyle: '#26a69a' } });
+    this.calf2 = Bodies.rectangle(x + 20, y + 90, 9, 45, { friction: 1, render: { fillStyle: '#26a69a' } });
 
-    this.joint1 = Constraint.create({
-      bodyA: this.body,
-      bodyB: this.leg1,
-      pointA: { x: -20, y: 10 },
-      pointB: { x: 0, y: -25 },
-      stiffness: 0.9,
-      render: {
-        strokeStyle: CREATURE_COLORS.joint,
-        lineWidth: 2,
-      },
-    });
+    this.joint1 = Constraint.create({ bodyA: this.body, bodyB: this.leg1, pointA: { x: -20, y: 10 }, pointB: { x: 0, y: -25 }, stiffness: 0.9 });
+    this.joint2 = Constraint.create({ bodyA: this.body, bodyB: this.leg2, pointA: { x: 20, y: 10 }, pointB: { x: 0, y: -25 }, stiffness: 0.9 });
+    this.knee1 = Constraint.create({ bodyA: this.leg1, bodyB: this.calf1, pointA: { x: 0, y: 25 }, pointB: { x: 0, y: -22 }, stiffness: 0.8 });
+    this.knee2 = Constraint.create({ bodyA: this.leg2, bodyB: this.calf2, pointA: { x: 0, y: 25 }, pointB: { x: 0, y: -22 }, stiffness: 0.8 });
 
-    this.joint2 = Constraint.create({
-      bodyA: this.body,
-      bodyB: this.leg2,
-      pointA: { x: 20, y: 10 },
-      pointB: { x: 0, y: -25 },
-      stiffness: 0.9,
-      render: {
-        strokeStyle: CREATURE_COLORS.joint,
-        lineWidth: 2,
-      },
-    });
-    // Rodilla izquierda
-    this.knee1 = Constraint.create({
-      bodyA: this.leg1,
-      bodyB: this.calf1,
-      pointA: { x: 0, y: 25 },
-      pointB: { x: 0, y: -22 },
-      stiffness: 0.8,
-      render: {
-        strokeStyle: CREATURE_COLORS.joint,
-        lineWidth: 2,
-      },
-    });
-    // Rodilla derecha
-    this.knee2 = Constraint.create({
-      bodyA: this.leg2,
-      bodyB: this.calf2,
-      pointA: { x: 0, y: 25 },
-      pointB: { x: 0, y: -22 },
-      stiffness: 0.8,
-      render: {
-        strokeStyle: CREATURE_COLORS.joint,
-        lineWidth: 2,
-      },
-    });
-
-    Composite.add(this.world, [
-      this.body,
-      this.leg1,
-      this.leg2,
-      this.calf1,
-      this.calf2,
-      this.joint1,
-      this.joint2,
-      this.knee1,
-      this.knee2,
-    ]);
+    Composite.add(this.world, [this.body, this.leg1, this.leg2, this.calf1, this.calf2, this.joint1, this.joint2, this.knee1, this.knee2]);
   }
 
-  update() {
-    this.time += 0.05;
+  update(dtMs = 16.67) {
+    const dt = dtMs / 1000;
+    this.time += dt;
+    const p = this.params;
+    const t = this.time * p.frequency;
+    const scale = p.controlScale;
 
-    const amplitude = this.genes[0];
-    const frequency = this.genes[1];
-    const force = this.genes[2];
+    const leftHip = p.hipAmp * Math.sin(t);
+    const rightHip = p.hipAmp * Math.sin(t + p.phaseOffset);
+    const leftKnee = p.kneeAmp * Math.sin(t + p.kneeLag);
+    const rightKnee = p.kneeAmp * Math.sin(t + p.phaseOffset + p.kneeLag);
 
-    const angle1 = amplitude * Math.sin(frequency * this.time);
+    this.applyAngularControl(this.leg1, leftHip * scale, 0.16);
+    this.applyAngularControl(this.leg2, rightHip * scale, 0.16);
+    this.applyAngularControl(this.calf1, leftKnee * scale, 0.14);
+    this.applyAngularControl(this.calf2, rightKnee * scale, 0.14);
 
-    const angle2 = amplitude * Math.sin(frequency * this.time + Math.PI);
-
-    Body.setAngularVelocity(this.leg1, angle1 * force);
-
-    Body.setAngularVelocity(this.leg2, angle2 * force);
+    const torsoTarget = p.torsoBias;
+    const torsoError = torsoTarget - this.body.angle;
+    const stabilizer = Math.max(-0.08, Math.min(0.08, torsoError * p.stabilityGain));
+    Body.setAngularVelocity(this.body, this.body.angularVelocity + stabilizer);
+    this.controlEffort += Math.abs(leftHip) + Math.abs(rightHip) + Math.abs(leftKnee) + Math.abs(rightKnee) + Math.abs(stabilizer) * 3;
   }
 
-  getFitness() {
-    return this.body.position.x;
+  applyAngularControl(part, targetVel, maxStep) {
+    const desired = Math.max(-2.2, Math.min(2.2, targetVel));
+    const delta = desired - part.angularVelocity;
+    const next = part.angularVelocity + Math.max(-maxStep, Math.min(maxStep, delta));
+    Body.setAngularVelocity(part, next);
   }
 
   remove() {
-    Composite.remove(this.world, this.body);
-    Composite.remove(this.world, this.leg1);
-    Composite.remove(this.world, this.leg2);
-    Composite.remove(this.world, this.calf1);
-    Composite.remove(this.world, this.calf2);
-    Composite.remove(this.world, this.joint1);
-    Composite.remove(this.world, this.joint2);
-    Composite.remove(this.world, this.knee1);
-    Composite.remove(this.world, this.knee2);
+    [this.body, this.leg1, this.leg2, this.calf1, this.calf2, this.joint1, this.joint2, this.knee1, this.knee2].forEach((item) => Composite.remove(this.world, item));
   }
 }

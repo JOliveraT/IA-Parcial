@@ -1,14 +1,16 @@
-export function evaluateFitness(creature) {
-  const startX = creature.startX ?? 200; // o el spawn x real
-  const currentX = creature.body.position.x;
+export function computeFitness(metrics) {
+  const forward = Math.max(0, metrics.deltaX);
+  const fallback = Math.max(0, -metrics.deltaX);
 
-  const deltaX = currentX - startX; // >0 derecha, <0 izquierda
+  const fitness =
+    forward * 3.0 +
+    metrics.survivalRatio * 8.0 -
+    metrics.avgTorsoAngle * 10.0 -
+    metrics.verticalBounce * 2.0 -
+    fallback * 1.5 -
+    metrics.controlEffort * 0.02 -
+    (metrics.fell ? 100 : 0) -
+    metrics.dragPenalty * 1.25;
 
-  // Recompensa por avanzar a la derecha
-  const forwardReward = Math.max(0, deltaX);
-
-  // Penalización fuerte por ir a la izquierda
-  const leftPenalty = deltaX < 0 ? Math.abs(deltaX) * 3 : 0;
-
-  return forwardReward - leftPenalty;
+  return Number.isFinite(fitness) ? fitness : -9999;
 }

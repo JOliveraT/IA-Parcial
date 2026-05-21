@@ -1,15 +1,8 @@
-export function tournamentSelection(population) {
-  const size = 3;
-
+export function tournamentSelection(population, tournamentSize = 2) {
   let best = null;
-
-  for (let i = 0; i < size; i++) {
-    const random = population[Math.floor(Math.random() * population.length)];
-
-    if (!best || random.fitness > best.fitness) {
-      best = random;
-    }
+  for (let i = 0; i < tournamentSize; i++) {
+    const candidate = population[Math.floor(Math.random() * population.length)];
+    if (!best || candidate.fitness > best.fitness) best = candidate;
   }
-
   return best;
 }
