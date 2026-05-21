@@ -9,21 +9,21 @@ function gaussianRandom() {
 }
 
 export function hillClimbElite(elite, evaluateOne, config) {
-  let best = { ...elite, genes: [...elite.genes] };
+  let best = { ...elite, chromosome: [...elite.chromosome] };
   let improved = false;
 
-  for (let n = 0; n < config.hillClimbNeighbors; n++) {
-    const neighborGenes = [...best.genes];
+  for (let n = 0; n < config.hillClimbNeighbors; n += 1) {
+    const neighbor = [...best.chromosome];
     const changes = Math.random() < 0.5 ? 1 : 2;
 
-    for (let c = 0; c < changes; c++) {
-      const idx = Math.floor(Math.random() * neighborGenes.length);
-      neighborGenes[idx] = clamp01(neighborGenes[idx] + gaussianRandom() * config.hillClimbSigma);
+    for (let c = 0; c < changes; c += 1) {
+      const idx = Math.floor(Math.random() * neighbor.length);
+      neighbor[idx] = clamp01(neighbor[idx] + gaussianRandom() * config.hillClimbSigma);
     }
 
-    const fitness = evaluateOne(neighborGenes);
+    const fitness = evaluateOne(neighbor);
     if (fitness > best.fitness) {
-      best = { genes: neighborGenes, fitness };
+      best = { ...best, chromosome: neighbor, fitness };
       improved = true;
     }
   }
