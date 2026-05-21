@@ -1,21 +1,28 @@
+const DEG = Math.PI / 180;
+
+const KEYFRAME_COUNT = 6;
+const JOINT_KEYS = ['leftHip', 'leftKnee', 'rightHip', 'rightKnee', 'bodyPitch'];
+
+const JOINT_LIMITS = {
+  leftHip: { min: -50 * DEG, max: 50 * DEG },
+  rightHip: { min: -50 * DEG, max: 50 * DEG },
+  leftKnee: { min: 0, max: 120 * DEG },
+  rightKnee: { min: 0, max: 120 * DEG },
+  bodyPitch: { min: -25 * DEG, max: 25 * DEG },
+};
+
 export const GENE_SPECS = [
-  { key: 'hipAmplitude', min: 0.25, max: 0.96 }, // ~14º..55º
-  { key: 'kneeAmplitude', min: 0.5, max: 1.9 }, // ~29º..109º
-  { key: 'stepFrequency', min: 1.0, max: 3.2 },
-  { key: 'phaseOffset', min: 2.6, max: 3.7 }, // anti-phase
-  { key: 'hipBias', min: -0.3, max: 0.22 },
-  { key: 'kneeBias', min: 0.08, max: 0.82 },
-  { key: 'kneePhase', min: -0.95, max: 1.05 },
-  { key: 'bodyPitchAmplitude', min: 0.0, max: 0.16 },
-  { key: 'bodyPitchBias', min: -0.12, max: 0.12 },
-  { key: 'strideLength', min: 1.1, max: 3.6 },
-  { key: 'stabilityFactor', min: 0.45, max: 1.35 },
-  { key: 'energyFactor', min: 0.35, max: 1.45 },
+  ...Array.from({ length: KEYFRAME_COUNT }).flatMap((_, frame) =>
+    JOINT_KEYS.map((joint) => ({ key: `kf_${frame}_${joint}`, ...JOINT_LIMITS[joint] })),
+  ),
+  { key: 'cycleDuration', min: 0.95, max: 2.4 },
+  { key: 'pushScale', min: 0.28, max: 1.1 },
+  { key: 'bodyHeightBias', min: -14, max: 14 },
 ];
 
-export function clamp01(value) {
-  return Math.max(0, Math.min(1, value));
-}
+const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
+
+export function clamp01(v) { return clamp(v, 0, 1); }
 
 export function randomChromosome() {
   return GENE_SPECS.map(() => Math.random());
@@ -25,8 +32,19 @@ export function decodeChromosome(chromosome) {
   const decoded = {};
   for (let i = 0; i < GENE_SPECS.length; i += 1) {
     const spec = GENE_SPECS[i];
-    const normalized = clamp01(chromosome[i] ?? 0.5);
-    decoded[spec.key] = spec.min + normalized * (spec.max - spec.min);
+    const t = clamp01(chromosome[i] ?? 0.5);
+    decoded[spec.key] = spec.min + t * (spec.max - spec.min);
   }
+
+  decoded.keyframes = Array.from({ length: KEYFRAME_COUNT }).map((_, frame) => ({
+    leftHip: decoded[`kf_${frame}_leftHip`],
+    leftKnee: decoded[`kf_${frame}_leftKnee`],
+    rightHip: decoded[`kf_${frame}_rightHip`],
+    rightKnee: decoded[`kf_${frame}_rightKnee`],
+    bodyPitch: decoded[`kf_${frame}_bodyPitch`],
+  }));
+
   return decoded;
 }
+
+export const CHROMOSOME_LAYOUT = { KEYFRAME_COUNT, JOINT_KEYS, JOINT_LIMITS };
