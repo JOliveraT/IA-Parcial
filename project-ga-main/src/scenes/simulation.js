@@ -10,16 +10,18 @@ import { createWorld } from '../physics/world';
 import { createGround } from '../physics/ground';
 import { Creature } from '../physics/creature';
 
-const { Engine, Composite, Bodies, World, Render } = Matter;
+const { Engine, Composite, Render, Events } = Matter;
 
 const START_X = IA_CONFIG.startX;
 const GOAL_X = IA_CONFIG.goalX;
 const START_Y = 540;
+const START_MARKER_X = 80;
+const GOAL_MARKER_X = GOAL_X;
 
 export function createSimulation(statsRef, optionsRef) {
   const visual = createWorld({ headless: false });
   createGround(visual.world);
-  createMarkers(visual.world);
+  attachMarkerOverlay(visual.render);
 
   let population = [];
   let running = false;
@@ -38,6 +40,45 @@ export function createSimulation(statsRef, optionsRef) {
     statsRef.value = { ...statsRef.value, status };
   }
 
+  function attachMarkerOverlay(render) {
+    if (!render) return;
+
+    Events.on(render, 'afterRender', () => {
+      const ctx = render.context;
+      const bounds = render.bounds;
+      const width = render.options.width;
+      const height = render.options.height;
+      const worldToScreenX = (x) => ((x - bounds.min.x) / (bounds.max.x - bounds.min.x)) * width;
+
+      drawMarker(ctx, worldToScreenX(START_MARKER_X), height - 110, '#2a9d8f', 'A');
+      drawMarker(ctx, worldToScreenX(GOAL_MARKER_X), height - 110, '#e63946', 'B');
+    });
+  }
+
+  function drawMarker(ctx, x, y, color, label) {
+    ctx.save();
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = color;
+    ctx.fillStyle = color;
+
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x, y - 90);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(x, y - 90);
+    ctx.lineTo(x + 28, y - 78);
+    ctx.lineTo(x, y - 66);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.fillStyle = '#111827';
+    ctx.font = 'bold 16px Inter, sans-serif';
+    ctx.fillText(label, x - 6, y - 98);
+    ctx.restore();
+  }
+
   function resetPopulation() {
     population = Array.from({ length: IA_CONFIG.populationSize }, () => ({ genes: randomChromosome(), fitness: 0, distance: 0, reachedGoal: false }));
     bestEver = null;
@@ -46,13 +87,6 @@ export function createSimulation(statsRef, optionsRef) {
     renderBest(population[0].genes);
   }
 
-  function createMarkers(world) {
-    const startPole = Bodies.rectangle(START_X, 620, 6, 120, { isStatic: true, render: { fillStyle: '#2a9d8f' } });
-    const startFlag = Bodies.rectangle(START_X + 18, 575, 30, 20, { isStatic: true, render: { fillStyle: '#2a9d8f' } });
-    const goalPole = Bodies.rectangle(GOAL_X, 620, 6, 120, { isStatic: true, render: { fillStyle: '#e63946' } });
-    const goalBanner = Bodies.rectangle(GOAL_X + 18, 575, 30, 20, { isStatic: true, render: { fillStyle: '#e63946' } });
-    World.add(world, [startPole, startFlag, goalPole, goalBanner]);
-  }
 
   function clearActors(world) {
     const dynamicBodies = Composite.allBodies(world).filter((b) => !b.isStatic);
