@@ -105,4 +105,9 @@ export class Creature {
   get body() {
     return this.torso;
   }
+
+  isTorsoTouchingGround(groundY, tolerance = 2) {
+    const halfHeight = this.torso.bounds.max.y - this.torso.position.y;
+    return this.torso.position.y + halfHeight >= groundY - tolerance;
+  }
 }

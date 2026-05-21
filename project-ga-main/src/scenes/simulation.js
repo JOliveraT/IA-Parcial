@@ -17,6 +17,10 @@ const GOAL_X = IA_CONFIG.goalX;
 const START_Y = 540;
 const START_MARKER_X = 80;
 const GOAL_MARKER_X = GOAL_X;
+const GROUND_Y = 620;
+const FALL_Y_LIMIT = GROUND_Y - 44;
+const TORSO_GROUND_LIMIT = GROUND_Y - 8;
+const MAX_BODY_ANGLE = (75 * Math.PI) / 180;
 
 export function createSimulation(statsRef, optionsRef) {
   const visual = createWorld({ headless: false });
@@ -101,6 +105,7 @@ export function createSimulation(statsRef, optionsRef) {
     const creature = new Creature(h.world, START_X, START_Y, genes);
 
     let bestX = START_X;
+    let validBestX = START_X;
     let lastAdvanceStep = 0;
     let lowTorsoPenalty = 0;
     let rotationPenalty = 0;
@@ -115,25 +120,29 @@ export function createSimulation(statsRef, optionsRef) {
       Engine.update(h.engine, IA_CONFIG.fixedDelta);
 
       const torso = creature.body;
+      const torsoTouchesGround = creature.isTorsoTouchingGround(GROUND_Y, 2) || torso.position.y >= TORSO_GROUND_LIMIT;
+      const fallen = torso.position.y > FALL_Y_LIMIT || Math.abs(torso.angle) > MAX_BODY_ANGLE || torsoTouchesGround;
+
       bestX = Math.max(bestX, torso.position.x);
+      if (!fallen) validBestX = Math.max(validBestX, torso.position.x);
 
       if (torso.position.x > START_X + 6) lastAdvanceStep = step;
       if (Math.abs(torso.angle) > 0.85) rotationPenalty += 1.1;
-      if (torso.position.y > 595) lowTorsoPenalty += 1.8;
+      if (torso.position.y > 570) lowTorsoPenalty += 2.4;
       if (Math.abs(creature.leftThigh.angularVelocity) > 4 || Math.abs(creature.rightThigh.angularVelocity) > 4) chaoticPenalty += 0.7;
 
-      if (torso.position.y > 670 || Math.abs(torso.angle) > 1.65) {
+      if (fallen) {
         fell = true;
         break;
       }
-      if (torso.position.x >= GOAL_X) {
+      if (!fell && !torsoTouchesGround && torso.position.x >= GOAL_X) {
         reachedGoal = true;
         break;
       }
       if (step - lastAdvanceStep > 150) break;
     }
 
-    const distance = Math.max(0, bestX - START_X);
+    const distance = Math.max(0, validBestX - START_X);
     const backwardPenalty = Math.max(0, START_X - creature.body.position.x) * 1.2;
     const fitness = computeFitness({
       distance,
@@ -144,6 +153,7 @@ export function createSimulation(statsRef, optionsRef) {
       rotationPenalty,
       backwardPenalty,
       chaoticPenalty,
+      rawDistance: Math.max(0, bestX - START_X),
     });
 
     return { fitness, distance, reachedGoal };
@@ -188,7 +198,7 @@ export function createSimulation(statsRef, optionsRef) {
 
     if (generation >= IA_CONFIG.maxGenerations) {
       running = false;
-      setStatus('Pausado');
+      setStatus('Máximo de generaciones alcanzado');
       return;
     }
 
@@ -217,6 +227,16 @@ export function createSimulation(statsRef, optionsRef) {
     let steps = 0;
     replayTimer = setInterval(() => {
       creature.update(IA_CONFIG.fixedDelta);
+      const torso = creature.body;
+      const torsoTouchesGround = creature.isTorsoTouchingGround(GROUND_Y, 2) || torso.position.y >= TORSO_GROUND_LIMIT;
+      const fallen = torso.position.y > FALL_Y_LIMIT || Math.abs(torso.angle) > MAX_BODY_ANGLE || torsoTouchesGround;
+
+      if (fallen) {
+        stopReplay();
+        clearActors(visual.world);
+        return;
+      }
+
       const x = creature.body.position.x;
       const left = Math.max(0, x - 300);
       Render.lookAt(visual.render, {
