@@ -12,7 +12,7 @@ const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const norm = (v, lo, hi) => clamp((v - lo) / (hi - lo), 0, 1);
 
 function currentGoal(generation) {
-  return Math.min(IA_CONFIG.goalX, 400 + generation * 12);
+  return Math.min(IA_CONFIG.goalX, 300 + generation * 8);
 }
 
 function poseAt(genes, time) {
@@ -44,26 +44,33 @@ function evaluateOne(chromosome, generation) {
     const pose = poseAt(g, time);
 
     const alternation = 1 - Math.abs(Math.PI - Math.abs(pose.leftHip - pose.rightHip)) / Math.PI;
-    const hipScore = norm(g.hipAmplitude, 0.25, 0.75);
+    const hipScore = norm(g.hipAmplitude, 0.1, 0.7);
     const kneeFlexion = (norm(pose.leftKnee, 0.25, 1.0) + norm(pose.rightKnee, 0.25, 1.0)) / 2;
     const stabilityScore = 1 - norm(Math.abs(pose.bodyPitch), 0.15, 0.75);
     const contactScore = 0.5 + 0.5 * Math.sin(pose.phase) * Math.sin(pose.phase + g.phaseOffset + Math.PI);
-    const strideScore = norm(g.strideLength, 45, 130);
+    const strideScore = norm(g.strideLength, 0.5, 3.0);
 
     const instability = Math.max(0, Math.abs(pose.bodyPitch) - 0.58) * 16;
     const energy = (Math.abs(pose.leftHip) + Math.abs(pose.rightHip) + pose.leftKnee + pose.rightKnee) * g.energyFactor * 0.5;
 
-    const gaitQuality =
-      alternation * 1.1 +
-      hipScore * 0.7 +
-      kneeFlexion * 0.85 +
-      strideScore * 0.55 +
-      stabilityScore * g.stabilityFactor +
-      contactScore * 0.35 -
-      energy * 0.18 -
-      instability;
+    const normalizedStabilityFactor = norm(g.stabilityFactor, 0.3, 1.3);
+    const normalizedEnergy = norm(energy, 0.2, 2.0);
+    const normalizedInstability = norm(instability, 0.0, 1.0);
+    const penalties = normalizedEnergy * 0.12 + normalizedInstability * 0.18;
+    const gaitQuality = clamp(
+      alternation * 0.25 +
+      kneeFlexion * 0.2 +
+      strideScore * 0.2 +
+      (stabilityScore * 0.7 + normalizedStabilityFactor * 0.3) * 0.2 +
+      contactScore * 0.15 -
+      penalties,
+      0,
+      1,
+    );
 
-    const speed = Math.max(0, gaitQuality) * (g.strideLength * 0.035);
+    const maxSpeed = 2.4;
+    const baseSpeed = gaitQuality * g.strideLength * 0.08;
+    const speed = gaitQuality < 0.18 ? 0 : clamp(baseSpeed, 0, maxSpeed);
     x += speed;
     bestX = Math.max(bestX, x);
     gaitSum += gaitQuality;
@@ -74,7 +81,7 @@ function evaluateOne(chromosome, generation) {
     else stagnationFrames = 0;
     prevX = x;
 
-    if (gaitQuality < 0.22) lowGaitFrames += 1;
+    if (gaitQuality < 0.2) lowGaitFrames += 1;
     else lowGaitFrames = 0;
 
     const invalidLeg = g.kneeBias + g.kneeAmplitude > 2.2 || g.hipAmplitude < 0.18;
@@ -91,15 +98,18 @@ function evaluateOne(chromosome, generation) {
     if (x >= IA_CONFIG.goalX) break;
   }
 
-  const validDistance = failed ? Math.max(0, bestX - IA_CONFIG.startX) * 0.2 : Math.max(0, bestX - IA_CONFIG.startX);
+  const bestDistance = Math.max(0, bestX - IA_CONFIG.startX);
+  const validDistance = failed ? bestDistance * 0.2 : bestDistance;
   const gaitQualityAverage = gaitSum / Math.max(1, aliveSteps);
+  const stabilityAverage = aliveSteps > 0 ? (aliveSteps - instabilityPenalty / 6) / aliveSteps : 0;
   const progressGap = Math.max(0, localGoal - bestX);
   const stagnationPenalty = stagnationFrames * 2 + progressGap * 0.3;
-  const reachedGoal = !failed && bestX >= IA_CONFIG.goalX;
+  const validGait = gaitQualityAverage >= 0.55 && stabilityAverage >= 0.5 && aliveSteps >= 200 && stagnationFrames < 100 && energyPenalty < 1200;
+  const reachedGoalFinal = !failed && bestX >= IA_CONFIG.goalX && validGait;
 
-  const fitness = computeFitness({ validDistance, aliveSteps, gaitQualityAverage, reachedGoal, failed, instabilityPenalty, energyPenalty, stagnationPenalty });
+  const fitness = computeFitness({ validDistance, aliveSteps, gaitQualityAverage, reachedGoal: reachedGoalFinal, failed, instabilityPenalty, energyPenalty, stagnationPenalty });
 
-  return { chromosome: [...chromosome], genes: g, fitness, distance: validDistance, reachedGoal, failed };
+  return { chromosome: [...chromosome], genes: g, fitness, distance: bestDistance, reachedGoalFinal, reachedPartialGoal: bestX >= localGoal, failed };
 }
 
 export function createSimulation(statsRef) {
@@ -158,12 +168,12 @@ export function createSimulation(statsRef) {
     statsRef.value = {
       generation,
       bestDistance: shown.distance,
-      status: shown.reachedGoal ? 'Meta alcanzada' : running ? 'Entrenando' : 'Pausado',
+      status: shown.reachedGoalFinal ? 'Meta alcanzada' : running ? 'Entrenando…' : 'Pausado',
     };
 
-    if (shown.reachedGoal || generation >= IA_CONFIG.maxGenerations) {
+    if (shown.reachedGoalFinal || generation >= IA_CONFIG.maxGenerations) {
       running = false;
-      statsRef.value = { ...statsRef.value, status: shown.reachedGoal ? 'Meta alcanzada' : 'Máximo alcanzado' };
+      statsRef.value = { ...statsRef.value, status: shown.reachedGoalFinal ? 'Meta alcanzada' : 'Máximo de generaciones alcanzado' };
       return;
     }
     population = nextPopulation(evaluated);
@@ -244,7 +254,7 @@ export function createSimulation(statsRef) {
   draw();
 
   return {
-    start() { if (running) return; running = true; statsRef.value = { ...statsRef.value, status: 'Entrenando' }; trainLoop(); },
+    start() { if (running) return; running = true; statsRef.value = { ...statsRef.value, status: 'Entrenando…' }; trainLoop(); },
     pause() { running = false; statsRef.value = { ...statsRef.value, status: 'Pausado' }; },
     reset() { running = false; viewTime = 0; resetPopulation(); },
     showBestNow() { if (bestEver) shown = bestEver; },
