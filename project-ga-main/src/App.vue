@@ -11,32 +11,29 @@
     </header>
 
     <section class="hud">
-      <p>Generación: <strong>{{ stats.generation }}</strong></p>
+      <p>Generación actual: <strong>{{ stats.generation }}</strong></p>
       <p>Mejor distancia: <strong>{{ stats.bestDistance.toFixed(1) }}</strong></p>
-      <p>Objetivo: llegar a la meta</p>
-      <p>Meta alcanzada: <strong>{{ stats.reachedGoal ? 'Sí' : 'No' }}</strong></p>
+      <p>Estado: <strong>{{ stats.status }}</strong></p>
     </section>
 
     <canvas id="world"></canvas>
 
     <details class="details">
-      <summary>Detalles técnicos</summary>
-      <label><input type="checkbox" v-model="options.showBest"> Mostrar mejor individuo durante entrenamiento</label>
+      <summary>Opciones avanzadas</summary>
       <button @click="sim?.step()">Ejecutar 1 generación</button>
-      <pre>{{ JSON.stringify(stats.details, null, 2) }}</pre>
+      <p>Úsalo solo para pruebas puntuales. El flujo principal recomendado es automático con “Iniciar”.</p>
     </details>
   </main>
 </template>
 
 <script setup>
-import { onMounted, reactive, ref } from 'vue';
+import { onMounted, ref } from 'vue';
 import { createSimulation } from './scenes/simulation';
 
-const stats = ref({ generation: 0, bestDistance: 0, reachedGoal: false, details: [] });
-const options = reactive({ showBest: true });
+const stats = ref({ generation: 0, bestDistance: 0, reachedGoal: false, status: 'Pausado' });
 let sim = null;
 
 onMounted(() => {
-  sim = createSimulation(stats, { value: options });
+  sim = createSimulation(stats, { value: {} });
 });
 </script>

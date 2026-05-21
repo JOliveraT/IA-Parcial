@@ -11,8 +11,10 @@ import { createGround } from '../physics/ground';
 import { Creature } from '../physics/creature';
 
 const { Engine, Composite, Bodies, World, Render } = Matter;
+
 const START_X = IA_CONFIG.startX;
 const GOAL_X = IA_CONFIG.goalX;
+const START_Y = 540;
 
 export function createSimulation(statsRef, optionsRef) {
   const visual = createWorld({ headless: false });
@@ -21,33 +23,49 @@ export function createSimulation(statsRef, optionsRef) {
 
   let population = [];
   let running = false;
+  let replayTimer = null;
   let bestEver = null;
 
-  const defaultStats = () => ({ generation: 0, bestDistance: 0, reachedGoal: false, bestFitness: 0, details: [] });
+  const defaultStats = () => ({
+    generation: 0,
+    bestDistance: 0,
+    reachedGoal: false,
+    bestFitness: 0,
+    status: 'Pausado',
+  });
+
+  function setStatus(status) {
+    statsRef.value = { ...statsRef.value, status };
+  }
 
   function resetPopulation() {
     population = Array.from({ length: IA_CONFIG.populationSize }, () => ({ genes: randomChromosome(), fitness: 0, distance: 0, reachedGoal: false }));
-    statsRef.value = defaultStats();
     bestEver = null;
+    stopReplay();
+    statsRef.value = defaultStats();
     renderBest(population[0].genes);
   }
 
   function createMarkers(world) {
     const startPole = Bodies.rectangle(START_X, 620, 6, 120, { isStatic: true, render: { fillStyle: '#2a9d8f' } });
+    const startFlag = Bodies.rectangle(START_X + 18, 575, 30, 20, { isStatic: true, render: { fillStyle: '#2a9d8f' } });
     const goalPole = Bodies.rectangle(GOAL_X, 620, 6, 120, { isStatic: true, render: { fillStyle: '#e63946' } });
     const goalBanner = Bodies.rectangle(GOAL_X + 18, 575, 30, 20, { isStatic: true, render: { fillStyle: '#e63946' } });
-    World.add(world, [startPole, goalPole, goalBanner]);
+    World.add(world, [startPole, startFlag, goalPole, goalBanner]);
   }
 
   function clearActors(world) {
-    const all = Composite.allBodies(world).filter((b) => !b.isStatic);
-    Composite.remove(world, all);
+    const dynamicBodies = Composite.allBodies(world).filter((b) => !b.isStatic);
+    const dynamicConstraints = Composite.allConstraints(world).filter((c) => !(c.bodyA?.isStatic && c.bodyB?.isStatic));
+    Composite.remove(world, dynamicBodies, true);
+    Composite.remove(world, dynamicConstraints, true);
   }
 
   function evaluateOne(genes) {
     const h = createWorld({ headless: true });
     createGround(h.world);
-    const creature = new Creature(h.world, START_X, 535, genes);
+    const creature = new Creature(h.world, START_X, START_Y, genes);
+
     let bestX = START_X;
     let lastAdvanceStep = 0;
     let lowTorsoPenalty = 0;
@@ -64,13 +82,13 @@ export function createSimulation(statsRef, optionsRef) {
 
       const torso = creature.body;
       bestX = Math.max(bestX, torso.position.x);
-      if (torso.position.x > START_X + 5) lastAdvanceStep = step;
 
-      if (Math.abs(torso.angle) > 0.9) rotationPenalty += 0.8;
-      if (torso.position.y > 600) lowTorsoPenalty += 1.5;
-      chaoticPenalty += Math.abs(creature.leftThigh.angularVelocity) > 3 ? 0.5 : 0;
+      if (torso.position.x > START_X + 6) lastAdvanceStep = step;
+      if (Math.abs(torso.angle) > 0.85) rotationPenalty += 1.1;
+      if (torso.position.y > 595) lowTorsoPenalty += 1.8;
+      if (Math.abs(creature.leftThigh.angularVelocity) > 4 || Math.abs(creature.rightThigh.angularVelocity) > 4) chaoticPenalty += 0.7;
 
-      if (torso.position.y > 670 || Math.abs(torso.angle) > 1.6) {
+      if (torso.position.y > 670 || Math.abs(torso.angle) > 1.65) {
         fell = true;
         break;
       }
@@ -78,12 +96,22 @@ export function createSimulation(statsRef, optionsRef) {
         reachedGoal = true;
         break;
       }
-      if (step - lastAdvanceStep > 140) break;
+      if (step - lastAdvanceStep > 150) break;
     }
 
     const distance = Math.max(0, bestX - START_X);
-    const backwardPenalty = Math.max(0, START_X - creature.body.position.x) * 0.8;
-    const fitness = computeFitness({ distance, stepsAlive: step, reachedGoal, fell, lowTorsoPenalty, rotationPenalty, backwardPenalty, chaoticPenalty });
+    const backwardPenalty = Math.max(0, START_X - creature.body.position.x) * 1.2;
+    const fitness = computeFitness({
+      distance,
+      stepsAlive: step,
+      reachedGoal,
+      fell,
+      lowTorsoPenalty,
+      rotationPenalty,
+      backwardPenalty,
+      chaoticPenalty,
+    });
+
     return { fitness, distance, reachedGoal };
   }
 
@@ -94,9 +122,10 @@ export function createSimulation(statsRef, optionsRef) {
       p.distance = result.distance;
       p.reachedGoal = result.reachedGoal;
     });
-    population.sort((a, b) => b.fitness - a.fitness);
 
+    population.sort((a, b) => b.fitness - a.fitness);
     const best = population[0];
+
     if (!bestEver || best.fitness > bestEver.fitness) bestEver = { ...best, genes: [...best.genes] };
 
     if (statsRef.value.generation > 0 && statsRef.value.generation % IA_CONFIG.hillClimbEvery === 0) {
@@ -104,6 +133,29 @@ export function createSimulation(statsRef, optionsRef) {
       if (improved.improved && improved.elite.fitness > best.fitness) {
         population[0] = { ...improved.elite, distance: best.distance, reachedGoal: best.reachedGoal };
       }
+    }
+
+    const generation = statsRef.value.generation + 1;
+    statsRef.value = {
+      ...statsRef.value,
+      generation,
+      bestDistance: best.distance,
+      bestFitness: best.fitness,
+      reachedGoal: best.reachedGoal,
+    };
+
+    renderBest(best.genes);
+
+    if (best.reachedGoal) {
+      running = false;
+      setStatus('Meta alcanzada');
+      return;
+    }
+
+    if (generation >= IA_CONFIG.maxGenerations) {
+      running = false;
+      setStatus('Pausado');
+      return;
     }
 
     const next = [...population.slice(0, IA_CONFIG.eliteSize).map((e) => ({ ...e, genes: [...e.genes] }))];
@@ -114,47 +166,71 @@ export function createSimulation(statsRef, optionsRef) {
       next.push({ genes: child, fitness: 0, distance: 0, reachedGoal: false });
     }
     population = next;
+  }
 
-    const generation = statsRef.value.generation + 1;
-    statsRef.value = {
-      generation,
-      bestDistance: best.distance,
-      bestFitness: best.fitness,
-      reachedGoal: best.reachedGoal,
-      details: [{ generation, fitness: best.fitness, distance: best.distance }],
-    };
-
-    if (optionsRef.value.showBest) renderBest(best.genes);
-
-    if (best.reachedGoal || generation >= IA_CONFIG.maxGenerations) running = false;
+  function stopReplay() {
+    if (replayTimer) {
+      clearInterval(replayTimer);
+      replayTimer = null;
+    }
   }
 
   function renderBest(genes) {
+    stopReplay();
     clearActors(visual.world);
-    const creature = new Creature(visual.world, START_X, 535, genes);
+
+    const creature = new Creature(visual.world, START_X, START_Y, genes);
     let steps = 0;
-    const timer = setInterval(() => {
+    replayTimer = setInterval(() => {
       creature.update(IA_CONFIG.fixedDelta);
       const x = creature.body.position.x;
       const left = Math.max(0, x - 300);
-      Render.lookAt(visual.render, { min: { x: left, y: 0 }, max: { x: left + window.innerWidth, y: window.innerHeight } });
+      Render.lookAt(visual.render, {
+        min: { x: left, y: 0 },
+        max: { x: left + window.innerWidth, y: window.innerHeight },
+      });
       steps += 1;
-      if (steps > 180) clearInterval(timer);
+      if (steps >= IA_CONFIG.bestReplaySteps) {
+        stopReplay();
+      }
     }, IA_CONFIG.fixedDelta);
   }
 
-  function loop() {
+  async function loop() {
     if (!running) return;
+
     runGeneration();
+    if (!running) return;
+
+    await new Promise((resolve) => setTimeout(resolve, IA_CONFIG.generationReplayPauseMs));
     if (running) requestAnimationFrame(loop);
   }
 
   resetPopulation();
+
   return {
-    start() { if (!running) { running = true; loop(); } },
-    pause() { running = false; },
-    reset() { running = false; resetPopulation(); },
-    step() { runGeneration(); },
-    showBestNow() { if (bestEver) renderBest(bestEver.genes); },
+    start() {
+      if (running || statsRef.value.reachedGoal) return;
+      running = true;
+      setStatus('Entrenando...');
+      loop();
+    },
+    pause() {
+      running = false;
+      setStatus(statsRef.value.reachedGoal ? 'Meta alcanzada' : 'Pausado');
+    },
+    reset() {
+      running = false;
+      stopReplay();
+      resetPopulation();
+    },
+    step() {
+      if (running || statsRef.value.reachedGoal) return;
+      runGeneration();
+      setStatus(statsRef.value.reachedGoal ? 'Meta alcanzada' : 'Pausado');
+    },
+    showBestNow() {
+      if (bestEver) renderBest(bestEver.genes);
+    },
   };
 }
