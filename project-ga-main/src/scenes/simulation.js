@@ -16,9 +16,10 @@ const START_X = IA_CONFIG.startX;
 const GOAL_X = IA_CONFIG.goalX;
 const START_MARKER_X = 80;
 const GOAL_MARKER_X = GOAL_X;
-const GROUND_Y = 620;
-const FALL_Y_LIMIT = GROUND_Y - 24;
-const TORSO_GROUND_LIMIT = GROUND_Y - 4;
+const GROUND_TOP_Y = 680;
+const FALL_Y_LIMIT = GROUND_TOP_Y - 24;
+const TORSO_GROUND_LIMIT = GROUND_TOP_Y - 4;
+const VALID_BODY_Y_LIMIT = GROUND_TOP_Y - 26;
 const MAX_BODY_ANGLE = (75 * Math.PI) / 180;
 
 export function createSimulation(statsRef, optionsRef) {
@@ -101,7 +102,7 @@ export function createSimulation(statsRef, optionsRef) {
   function evaluateOne(genes) {
     const h = createWorld({ headless: true });
     createGround(h.world);
-    const creature = new Creature(h.world, genes, { startX: START_X, groundY: GROUND_Y });
+    const creature = new Creature(h.world, genes, { startX: START_X, groundTopY: GROUND_TOP_Y });
 
     let bestX = START_X;
     let validBestX = START_X;
@@ -119,7 +120,7 @@ export function createSimulation(statsRef, optionsRef) {
       Engine.update(h.engine, IA_CONFIG.fixedDelta);
 
       const torso = creature.body;
-      const torsoTouchesGround = creature.isTorsoTouchingGround(GROUND_Y, 2) || torso.position.y >= TORSO_GROUND_LIMIT;
+      const torsoTouchesGround = creature.isTorsoTouchingGround(GROUND_TOP_Y, 2) || torso.position.y >= TORSO_GROUND_LIMIT;
       const fallen = torso.position.y > FALL_Y_LIMIT || Math.abs(torso.angle) > MAX_BODY_ANGLE || torsoTouchesGround;
 
       bestX = Math.max(bestX, torso.position.x);
@@ -132,9 +133,10 @@ export function createSimulation(statsRef, optionsRef) {
 
       if (fallen) {
         fell = true;
+        reachedGoal = false;
         break;
       }
-      if (!fell && !torsoTouchesGround && torso.position.x >= GOAL_X) {
+      if (!fell && !torsoTouchesGround && torso.position.y < VALID_BODY_Y_LIMIT && torso.position.x >= GOAL_X) {
         reachedGoal = true;
         break;
       }
@@ -153,6 +155,7 @@ export function createSimulation(statsRef, optionsRef) {
       backwardPenalty,
       chaoticPenalty,
       rawDistance: Math.max(0, bestX - START_X),
+      dragDistance: Math.max(0, bestX - validBestX),
     });
 
     return { fitness, distance, reachedGoal };
@@ -222,12 +225,12 @@ export function createSimulation(statsRef, optionsRef) {
     stopReplay();
     clearActors(visual.world);
 
-    const creature = new Creature(visual.world, genes, { startX: START_X, groundY: GROUND_Y });
+    const creature = new Creature(visual.world, genes, { startX: START_X, groundTopY: GROUND_TOP_Y });
     let steps = 0;
     replayTimer = setInterval(() => {
       creature.update(IA_CONFIG.fixedDelta);
       const torso = creature.body;
-      const torsoTouchesGround = creature.isTorsoTouchingGround(GROUND_Y, 2) || torso.position.y >= TORSO_GROUND_LIMIT;
+      const torsoTouchesGround = creature.isTorsoTouchingGround(GROUND_TOP_Y, 2) || torso.position.y >= TORSO_GROUND_LIMIT;
       const fallen = torso.position.y > FALL_Y_LIMIT || Math.abs(torso.angle) > MAX_BODY_ANGLE || torsoTouchesGround;
 
       if (fallen) {

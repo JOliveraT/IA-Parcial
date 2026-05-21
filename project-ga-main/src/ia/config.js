@@ -13,8 +13,8 @@ export const IA_CONFIG = {
   hillClimbEvery: 10,
   hillClimbNeighbors: 3,
   hillClimbSigma: 0.02,
-  goalX: 1000,
-  startX: 100,
+  goalX: 2000,
+  startX: 120,
   bestReplaySteps: 180,
   generationReplayPauseMs: 300,
 };

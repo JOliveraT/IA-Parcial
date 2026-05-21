@@ -20,7 +20,7 @@ export class Creature {
 
     const defaults = {
       startX: 120,
-      groundY: 620,
+      groundTopY: 680,
       bodyWidth: 78,
       bodyHeight: 20,
       femurLength: 50,
@@ -40,12 +40,19 @@ export class Creature {
     const baseOpt = { friction: 1.15, frictionStatic: 2.2, restitution: 0, density: 0.002 };
 
     const d = this.dimensions;
-    const hipY = d.groundY - d.tibiaLength - d.femurLength;
+    const leftLegX = d.startX - 18;
+    const rightLegX = d.startX + 18;
+
+    const tibiaBottomY = d.groundTopY - 2;
+    const tibiaCenterY = tibiaBottomY - d.tibiaLength / 2;
+    const kneeBaseY = tibiaBottomY - d.tibiaLength;
+    const leftKneeY = kneeBaseY - 4;
+    const rightKneeY = kneeBaseY + 3;
+
+    const leftThighCenterY = leftKneeY - d.femurLength / 2;
+    const rightThighCenterY = rightKneeY - d.femurLength / 2;
+    const hipY = Math.min(leftKneeY, rightKneeY) - d.femurLength;
     const torsoY = hipY - d.hipDrop + d.bodyHeight / 2;
-    const thighY = hipY + d.femurLength / 2;
-    const calfY = d.groundY - d.tibiaLength / 2;
-    const leftLegX = d.startX - (d.legGap / 2 + d.femurWidth / 2);
-    const rightLegX = d.startX + (d.legGap / 2 + d.femurWidth / 2);
 
     this.torso = Bodies.rectangle(d.startX, torsoY, d.bodyWidth, d.bodyHeight, {
       ...baseOpt,
@@ -54,21 +61,21 @@ export class Creature {
       render: { fillStyle: '#ee6c4d' },
     });
 
-    this.leftThigh = Bodies.rectangle(leftLegX, thighY, d.femurWidth, d.femurLength, {
+    this.leftThigh = Bodies.rectangle(leftLegX - 6, leftThighCenterY, d.femurWidth, d.femurLength, {
       ...baseOpt,
       render: { fillStyle: '#3d5a80' },
     });
-    this.rightThigh = Bodies.rectangle(rightLegX, thighY, d.femurWidth, d.femurLength, {
+    this.rightThigh = Bodies.rectangle(rightLegX + 6, rightThighCenterY, d.femurWidth, d.femurLength, {
       ...baseOpt,
       render: { fillStyle: '#3d5a80' },
     });
 
-    this.leftCalf = Bodies.rectangle(leftLegX, calfY, d.tibiaWidth, d.tibiaLength, {
+    this.leftCalf = Bodies.rectangle(leftLegX - 2, tibiaCenterY, d.tibiaWidth, d.tibiaLength, {
       ...baseOpt,
       density: 0.0023,
       render: { fillStyle: '#98c1d9' },
     });
-    this.rightCalf = Bodies.rectangle(rightLegX, calfY, d.tibiaWidth, d.tibiaLength, {
+    this.rightCalf = Bodies.rectangle(rightLegX + 2, tibiaCenterY, d.tibiaWidth, d.tibiaLength, {
       ...baseOpt,
       density: 0.0023,
       render: { fillStyle: '#98c1d9' },
@@ -131,8 +138,8 @@ export class Creature {
     return this.torso;
   }
 
-  isTorsoTouchingGround(groundY, tolerance = 2) {
+  isTorsoTouchingGround(groundTopY, tolerance = 2) {
     const halfHeight = this.torso.bounds.max.y - this.torso.position.y;
-    return this.torso.position.y + halfHeight >= groundY - tolerance;
+    return this.torso.position.y + halfHeight >= groundTopY - tolerance;
   }
 }
