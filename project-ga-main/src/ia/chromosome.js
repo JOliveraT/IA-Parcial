@@ -21,11 +21,62 @@ export const GENE_SPECS = [
 ];
 
 const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
+const randn = () => {
+  let u = 0; let v = 0;
+  while (u === 0) u = Math.random();
+  while (v === 0) v = Math.random();
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+};
 
 export function clamp01(v) { return clamp(v, 0, 1); }
 
+function encodeValue(value, spec) {
+  return clamp01((value - spec.min) / (spec.max - spec.min));
+}
+
+function buildChromosomeFromDecoded(decoded) {
+  return GENE_SPECS.map((spec) => encodeValue(decoded[spec.key], spec));
+}
+
 export function randomChromosome() {
   return GENE_SPECS.map(() => Math.random());
+}
+
+export function createWalkingSeed() {
+  const baseFrames = [
+    { leftHip: 22 * DEG, leftKnee: 22 * DEG, rightHip: -34 * DEG, rightKnee: 88 * DEG, bodyPitch: -5 * DEG },
+    { leftHip: 12 * DEG, leftKnee: 16 * DEG, rightHip: -16 * DEG, rightKnee: 56 * DEG, bodyPitch: -2 * DEG },
+    { leftHip: -34 * DEG, leftKnee: 86 * DEG, rightHip: 24 * DEG, rightKnee: 20 * DEG, bodyPitch: 5 * DEG },
+    { leftHip: -18 * DEG, leftKnee: 60 * DEG, rightHip: 14 * DEG, rightKnee: 14 * DEG, bodyPitch: 2 * DEG },
+  ];
+
+  const decoded = {};
+  for (let frame = 0; frame < KEYFRAME_COUNT; frame += 1) {
+    const kf = baseFrames[frame % baseFrames.length];
+    decoded[`kf_${frame}_leftHip`] = kf.leftHip;
+    decoded[`kf_${frame}_leftKnee`] = kf.leftKnee;
+    decoded[`kf_${frame}_rightHip`] = kf.rightHip;
+    decoded[`kf_${frame}_rightKnee`] = kf.rightKnee;
+    decoded[`kf_${frame}_bodyPitch`] = kf.bodyPitch;
+  }
+
+  decoded.cycleDuration = 1.5;
+  decoded.dutyFactor = 0.52;
+  decoded.hipHeightBias = -2;
+
+  return buildChromosomeFromDecoded(decoded);
+}
+
+export function createMutatedWalkingSeed(sigma = 0.12) {
+  const seed = decodeChromosome(createWalkingSeed());
+  const decoded = {};
+
+  for (const spec of GENE_SPECS) {
+    const value = seed[spec.key] + randn() * sigma * (spec.max - spec.min);
+    decoded[spec.key] = clamp(value, spec.min, spec.max);
+  }
+
+  return buildChromosomeFromDecoded(decoded);
 }
 
 export function decodeChromosome(chromosome) {

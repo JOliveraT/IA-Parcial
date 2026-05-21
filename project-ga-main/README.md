@@ -18,42 +18,62 @@ La locomoción usa una pierna de apoyo (stance) y una de recuperación (swing):
 
 > No hay avance por fórmula artificial (`x += gaitQuality`, `x += speed`, etc.).
 
+## Inicialización híbrida de población
+Se cambió de inicialización puramente aleatoria a esquema híbrido:
+- **40%** semillas de marcha mutadas suaves (`createMutatedWalkingSeed(0.10)`).
+- **40%** cromosomas aleatorios (`randomChromosome()`).
+- **20%** semillas mutadas fuertes (`createMutatedWalkingSeed(0.25)`).
+
+### ¿Por qué?
+El espacio de búsqueda de keyframes articulares es muy grande. Empezar con algunas semillas de marcha:
+- mejora **intensificación** (desde generación 1 hay intentos torpes pero reconocibles),
+- sin perder **diversificación** (población aleatoria + mutación + crossover + inmigrantes).
+
+El GA sigue siendo genético: selección por torneo, crossover BLX-α, mutación gaussiana acotada, elitismo e inmigración.
+
+## Diversificación en plateau
+Si hay estancamiento generacional:
+- se insertan inmigrantes aleatorios (`randomImmigrantRate`),
+- y también semillas mutadas (`seedImmigrantRate`).
+
+Así se evita converger solo a una familia genética.
+
 ## Fallos de intento
 Se corta el intento si aparece inestabilidad clara:
 - torso demasiado bajo/alto;
 - inclinación excesiva;
 - cruce absurdo de piernas;
-- estancamiento prolongado;
+- estancamiento prolongado (con mínimo de pasos antes de activar corte);
 - mala transición de apoyo.
 
 ## Fitness
 Se optimiza:
 - distancia válida;
-- pasos válidos (transiciones stance correctas);
+- **pasos válidos** (peso alto);
 - calidad de apoyo (poco deslizamiento del pie plantado);
-- alternancia correcta.
+- alternancia correcta;
+- estabilidad y supervivencia temporal.
 
 Con penalizaciones por caída/fallo, deslizamiento de pie, estancamiento, pose inválida y energía excesiva.
-
-## GA del curso (mantenido)
-- Inicialización aleatoria.
-- Selección por torneo.
-- Crossover BLX-α.
-- Mutación gaussiana acotada.
-- Elitismo.
-- Diversificación con inmigrantes aleatorios.
-- Intensificación con hill climbing ligero.
 
 ## Replay completo por generación
 1. Se evalúa toda la población internamente.
 2. Se selecciona el mejor individuo.
-3. Se reproduce **todo** su intento desde A (avance/fallo/meta).
-4. Recién después se pasa a la generación siguiente.
+3. Se muestra: **“Generación N - Mejor intento”**.
+4. Se reproduce **todo** su intento desde A.
+5. Si falla, se muestra “Falló”.
+6. Se reinicia visualmente en A y recién ahí pasa a N+1.
 
 UI:
 - Generación actual.
 - Mejor distancia.
-- Estado: Entrenando / Reproduciendo / Falló / Meta alcanzada.
+- Estado.
+- Fase: Evaluando / Reproduciendo mejor intento / Reiniciando.
+
+## Cámara / escala
+- Cámara siguiendo al avatar (`cameraX ≈ bodyX - 230`).
+- Piernas dibujadas con mayor grosor para visibilidad.
+- Meta dibujada cuando entra en rango de cámara.
 
 ## Ejecución
 ```bash
