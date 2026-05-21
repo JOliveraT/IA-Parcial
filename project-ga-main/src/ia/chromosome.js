@@ -44,15 +44,19 @@ export function randomChromosome() {
 
 export function createWalkingSeed() {
   const baseFrames = [
-    { leftHip: 22 * DEG, leftKnee: 22 * DEG, rightHip: -34 * DEG, rightKnee: 88 * DEG, bodyPitch: -5 * DEG },
-    { leftHip: 12 * DEG, leftKnee: 16 * DEG, rightHip: -16 * DEG, rightKnee: 56 * DEG, bodyPitch: -2 * DEG },
-    { leftHip: -34 * DEG, leftKnee: 86 * DEG, rightHip: 24 * DEG, rightKnee: 20 * DEG, bodyPitch: 5 * DEG },
-    { leftHip: -18 * DEG, leftKnee: 60 * DEG, rightHip: 14 * DEG, rightKnee: 14 * DEG, bodyPitch: 2 * DEG },
+    { leftHip: 30 * DEG, leftKnee: 18 * DEG, rightHip: -30 * DEG, rightKnee: 96 * DEG, bodyPitch: -7 * DEG },
+    { leftHip: 20 * DEG, leftKnee: 12 * DEG, rightHip: -12 * DEG, rightKnee: 72 * DEG, bodyPitch: -4 * DEG },
+    { leftHip: -10 * DEG, leftKnee: 18 * DEG, rightHip: 20 * DEG, rightKnee: 20 * DEG, bodyPitch: 2 * DEG },
+    { leftHip: -30 * DEG, leftKnee: 96 * DEG, rightHip: 30 * DEG, rightKnee: 18 * DEG, bodyPitch: 7 * DEG },
+    { leftHip: -12 * DEG, leftKnee: 72 * DEG, rightHip: 20 * DEG, rightKnee: 12 * DEG, bodyPitch: 4 * DEG },
+    { leftHip: 20 * DEG, leftKnee: 20 * DEG, rightHip: -10 * DEG, rightKnee: 18 * DEG, bodyPitch: -2 * DEG },
+    { leftHip: 30 * DEG, leftKnee: 18 * DEG, rightHip: -30 * DEG, rightKnee: 96 * DEG, bodyPitch: -7 * DEG },
+    { leftHip: 22 * DEG, leftKnee: 14 * DEG, rightHip: -18 * DEG, rightKnee: 78 * DEG, bodyPitch: -5 * DEG },
   ];
 
   const decoded = {};
   for (let frame = 0; frame < KEYFRAME_COUNT; frame += 1) {
-    const kf = baseFrames[frame % baseFrames.length];
+    const kf = baseFrames[frame];
     decoded[`kf_${frame}_leftHip`] = kf.leftHip;
     decoded[`kf_${frame}_leftKnee`] = kf.leftKnee;
     decoded[`kf_${frame}_rightHip`] = kf.rightHip;
@@ -60,9 +64,9 @@ export function createWalkingSeed() {
     decoded[`kf_${frame}_bodyPitch`] = kf.bodyPitch;
   }
 
-  decoded.cycleDuration = 1.5;
-  decoded.dutyFactor = 0.52;
-  decoded.hipHeightBias = -2;
+  decoded.cycleDuration = 1.3;
+  decoded.dutyFactor = 0.58;
+  decoded.hipHeightBias = -4;
 
   return buildChromosomeFromDecoded(decoded);
 }

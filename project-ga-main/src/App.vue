@@ -7,6 +7,7 @@
         <button @click="sim?.pause()">Pausar</button>
         <button @click="sim?.reset()">Reiniciar</button>
         <button @click="sim?.showBestNow()">Ver mejor</button>
+        <button @click="sim?.showWalkingSeed()">Ver marcha base</button>
       </div>
     </header>
 

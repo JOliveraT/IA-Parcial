@@ -19,10 +19,10 @@ La locomoción usa una pierna de apoyo (stance) y una de recuperación (swing):
 > No hay avance por fórmula artificial (`x += gaitQuality`, `x += speed`, etc.).
 
 ## Inicialización híbrida de población
-Se cambió de inicialización puramente aleatoria a esquema híbrido:
-- **40%** semillas de marcha mutadas suaves (`createMutatedWalkingSeed(0.10)`).
-- **40%** cromosomas aleatorios (`randomChromosome()`).
-- **20%** semillas mutadas fuertes (`createMutatedWalkingSeed(0.25)`).
+La población arranca con una base de intensificación:
+- **60%** semillas de marcha mutadas suave (`createMutatedWalkingSeed(0.06)`).
+- **20%** semillas de marcha mutadas fuerte (`createMutatedWalkingSeed(0.18)`).
+- **20%** cromosomas aleatorios (`randomChromosome()`).
 
 ### ¿Por qué?
 El espacio de búsqueda de keyframes articulares es muy grande. Empezar con algunas semillas de marcha:
@@ -32,11 +32,11 @@ El espacio de búsqueda de keyframes articulares es muy grande. Empezar con algu
 El GA sigue siendo genético: selección por torneo, crossover BLX-α, mutación gaussiana acotada, elitismo e inmigración.
 
 ## Diversificación en plateau
-Si hay estancamiento generacional:
-- se insertan inmigrantes aleatorios (`randomImmigrantRate`),
-- y también semillas mutadas (`seedImmigrantRate`).
+Si hay estancamiento generacional, los inmigrantes se inyectan como:
+- **50%** aleatorios,
+- **50%** semillas mutadas de marcha (`createMutatedWalkingSeed(0.14)`).
 
-Así se evita converger solo a una familia genética.
+Así se evita converger solo a una familia genética sin perder la base de caminata.
 
 ## Fallos de intento
 Se corta el intento si aparece inestabilidad clara:
@@ -81,3 +81,17 @@ npm install
 npm run dev
 npm run build
 ```
+
+
+## Validación interna de semilla
+En el arranque se ejecuta `validateWalkingSeed()` para simular `createWalkingSeed()` y reportar en consola:
+- distancia lograda,
+- pasos válidos,
+- si cayó/falló,
+- fitness final.
+
+Esto permite verificar rápidamente si la marcha base ya es funcional antes de entrenar.
+
+## Visualización de marcha base
+En la UI existe el botón **“Ver marcha base”**, que reproduce la semilla funcional sin evolución.
+Sirve para comprobar el patrón base de apoyo alternado plantado antes de lanzar generaciones.
