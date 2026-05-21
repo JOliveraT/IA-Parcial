@@ -2,66 +2,83 @@ import Matter from 'matter-js';
 import { decodeChromosome } from '../ia/chromosome';
 
 const { Bodies, Constraint, Composite, Body } = Matter;
+const deg = (v) => (v * Math.PI) / 180;
+const clamp = (v, mn, mx) => Math.max(mn, Math.min(mx, v));
 
 export class Creature {
   constructor(world, x, y, chromosome) {
     this.world = world;
-    this.chromosome = chromosome;
     this.params = decodeChromosome(chromosome);
     this.startX = x;
     this.time = 0;
     this.controlEffort = 0;
-
     this.createBody(x, y);
   }
 
   createBody(x, y) {
-    this.body = Bodies.rectangle(x, y, 60, 20, { friction: 0.8, render: { fillStyle: '#ff7043' } });
-    this.leg1 = Bodies.rectangle(x - 20, y + 40, 10, 50, { friction: 1, render: { fillStyle: '#42a5f5' } });
-    this.leg2 = Bodies.rectangle(x + 20, y + 40, 10, 50, { friction: 1, render: { fillStyle: '#42a5f5' } });
-    this.calf1 = Bodies.rectangle(x - 20, y + 90, 9, 45, { friction: 1, render: { fillStyle: '#26a69a' } });
-    this.calf2 = Bodies.rectangle(x + 20, y + 90, 9, 45, { friction: 1, render: { fillStyle: '#26a69a' } });
+    const opt = { friction: 1, frictionStatic: 2, restitution: 0, density: 0.002 };
+    this.torso = Bodies.rectangle(x, y, 35, 60, { ...opt, render: { fillStyle: '#ee6c4d' } });
+    this.head = Bodies.circle(x, y - 42, 12, { density: 0.001, render: { fillStyle: '#f4d6cc' } });
 
-    this.joint1 = Constraint.create({ bodyA: this.body, bodyB: this.leg1, pointA: { x: -20, y: 10 }, pointB: { x: 0, y: -25 }, stiffness: 0.9 });
-    this.joint2 = Constraint.create({ bodyA: this.body, bodyB: this.leg2, pointA: { x: 20, y: 10 }, pointB: { x: 0, y: -25 }, stiffness: 0.9 });
-    this.knee1 = Constraint.create({ bodyA: this.leg1, bodyB: this.calf1, pointA: { x: 0, y: 25 }, pointB: { x: 0, y: -22 }, stiffness: 0.8 });
-    this.knee2 = Constraint.create({ bodyA: this.leg2, bodyB: this.calf2, pointA: { x: 0, y: 25 }, pointB: { x: 0, y: -22 }, stiffness: 0.8 });
+    this.leftThigh = Bodies.rectangle(x - 12, y + 50, 12, 45, { ...opt, render: { fillStyle: '#3d5a80' } });
+    this.rightThigh = Bodies.rectangle(x + 12, y + 50, 12, 45, { ...opt, render: { fillStyle: '#3d5a80' } });
+    this.leftCalf = Bodies.rectangle(x - 12, y + 95, 10, 45, { ...opt, render: { fillStyle: '#98c1d9' } });
+    this.rightCalf = Bodies.rectangle(x + 12, y + 95, 10, 45, { ...opt, render: { fillStyle: '#98c1d9' } });
+    this.leftFoot = Bodies.rectangle(x - 12, y + 125, 28, 8, { ...opt, density: 0.003, render: { fillStyle: '#293241' } });
+    this.rightFoot = Bodies.rectangle(x + 12, y + 125, 28, 8, { ...opt, density: 0.003, render: { fillStyle: '#293241' } });
 
-    Composite.add(this.world, [this.body, this.leg1, this.leg2, this.calf1, this.calf2, this.joint1, this.joint2, this.knee1, this.knee2]);
+    this.constraints = [
+      Constraint.create({ bodyA: this.torso, pointA: { x: 0, y: -30 }, bodyB: this.head, pointB: { x: 0, y: 12 }, stiffness: 0.9 }),
+      Constraint.create({ bodyA: this.torso, pointA: { x: -10, y: 24 }, bodyB: this.leftThigh, pointB: { x: 0, y: -22 }, stiffness: 0.95 }),
+      Constraint.create({ bodyA: this.torso, pointA: { x: 10, y: 24 }, bodyB: this.rightThigh, pointB: { x: 0, y: -22 }, stiffness: 0.95 }),
+      Constraint.create({ bodyA: this.leftThigh, pointA: { x: 0, y: 22 }, bodyB: this.leftCalf, pointB: { x: 0, y: -22 }, stiffness: 0.95 }),
+      Constraint.create({ bodyA: this.rightThigh, pointA: { x: 0, y: 22 }, bodyB: this.rightCalf, pointB: { x: 0, y: -22 }, stiffness: 0.95 }),
+      Constraint.create({ bodyA: this.leftCalf, pointA: { x: 0, y: 22 }, bodyB: this.leftFoot, pointB: { x: -8, y: -2 }, stiffness: 0.95 }),
+      Constraint.create({ bodyA: this.rightCalf, pointA: { x: 0, y: 22 }, bodyB: this.rightFoot, pointB: { x: -8, y: -2 }, stiffness: 0.95 }),
+    ];
+
+    this.parts = [this.torso, this.head, this.leftThigh, this.rightThigh, this.leftCalf, this.rightCalf, this.leftFoot, this.rightFoot];
+    Composite.add(this.world, [...this.parts, ...this.constraints]);
   }
 
-  update(dtMs = 16.67) {
+  update(dtMs) {
     const dt = dtMs / 1000;
     this.time += dt;
     const p = this.params;
-    const t = this.time * p.frequency;
-    const scale = p.controlScale;
+    const phase = this.time * p.stepFrequency;
+    const kneePhase = Math.PI * 0.45;
 
-    const leftHip = p.hipAmp * Math.sin(t);
-    const rightHip = p.hipAmp * Math.sin(t + p.phaseOffset);
-    const leftKnee = p.kneeAmp * Math.sin(t + p.kneeLag);
-    const rightKnee = p.kneeAmp * Math.sin(t + p.phaseOffset + p.kneeLag);
+    const lHipTarget = p.hipBias + p.hipAmplitude * Math.sin(phase);
+    const rHipTarget = p.hipBias + p.hipAmplitude * Math.sin(phase + p.phaseOffset);
+    const lKneeTarget = p.kneeBias + p.kneeAmplitude * Math.max(0, Math.sin(phase + kneePhase));
+    const rKneeTarget = p.kneeBias + p.kneeAmplitude * Math.max(0, Math.sin(phase + p.phaseOffset + kneePhase));
 
-    this.applyAngularControl(this.leg1, leftHip * scale, 0.16);
-    this.applyAngularControl(this.leg2, rightHip * scale, 0.16);
-    this.applyAngularControl(this.calf1, leftKnee * scale, 0.14);
-    this.applyAngularControl(this.calf2, rightKnee * scale, 0.14);
+    this.applyJointControl(this.leftThigh, this.torso, lHipTarget, -deg(45), deg(45), p.motorStrength * 10);
+    this.applyJointControl(this.rightThigh, this.torso, rHipTarget, -deg(45), deg(45), p.motorStrength * 10);
+    this.applyJointControl(this.leftCalf, this.leftThigh, lKneeTarget, 0, deg(90), p.motorStrength * 9);
+    this.applyJointControl(this.rightCalf, this.rightThigh, rKneeTarget, 0, deg(90), p.motorStrength * 9);
+    this.applyJointControl(this.leftFoot, this.leftCalf, 0, -deg(25), deg(25), p.motorStrength * 7);
+    this.applyJointControl(this.rightFoot, this.rightCalf, 0, -deg(25), deg(25), p.motorStrength * 7);
 
-    const torsoTarget = p.torsoBias;
-    const torsoError = torsoTarget - this.body.angle;
-    const stabilizer = Math.max(-0.08, Math.min(0.08, torsoError * p.stabilityGain));
-    Body.setAngularVelocity(this.body, this.body.angularVelocity + stabilizer);
-    this.controlEffort += Math.abs(leftHip) + Math.abs(rightHip) + Math.abs(leftKnee) + Math.abs(rightKnee) + Math.abs(stabilizer) * 3;
+    const torsoErr = -this.torso.angle;
+    Body.setAngularVelocity(this.torso, this.torso.angularVelocity + clamp(torsoErr * p.torsoStability, -0.04, 0.04));
   }
 
-  applyAngularControl(part, targetVel, maxStep) {
-    const desired = Math.max(-2.2, Math.min(2.2, targetVel));
-    const delta = desired - part.angularVelocity;
-    const next = part.angularVelocity + Math.max(-maxStep, Math.min(maxStep, delta));
-    Body.setAngularVelocity(part, next);
+  applyJointControl(part, base, target, minA, maxA, gain) {
+    const rel = part.angle - base.angle;
+    const clamped = clamp(target, minA, maxA);
+    const err = clamped - rel;
+    const delta = clamp(err * gain, -0.05, 0.05);
+    Body.setAngularVelocity(part, clamp(part.angularVelocity + delta, -2.5, 2.5));
+
+    if (rel < minA || rel > maxA) {
+      const correction = clamp((clamp(rel, minA, maxA) - rel) * 0.3, -0.08, 0.08);
+      Body.setAngularVelocity(part, part.angularVelocity + correction);
+    }
+    this.controlEffort += Math.abs(delta);
   }
 
-  remove() {
-    [this.body, this.leg1, this.leg2, this.calf1, this.calf2, this.joint1, this.joint2, this.knee1, this.knee2].forEach((item) => Composite.remove(this.world, item));
+  get body() {
+    return this.torso;
   }
 }
