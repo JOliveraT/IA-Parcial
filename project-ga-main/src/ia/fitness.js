@@ -13,6 +13,8 @@ export function computeFitness(metrics) {
     (metrics.footSlipPenalty ?? 0) -
     (metrics.stagnationPenalty ?? 0) -
     (metrics.invalidPosePenalty ?? 0) -
+    (metrics.groundPenetrationPenalty ?? 0) -
+    (metrics.invalidGroundContactPenalty ?? 0) -
     (metrics.energyPenalty ?? 0);
 
   return Number.isFinite(fitness) ? fitness : -9999;
