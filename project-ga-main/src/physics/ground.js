@@ -1,14 +1,15 @@
-import Matter from "matter-js";
+import Matter from 'matter-js';
 
 const { Bodies, World } = Matter;
 
 export function createGround(world) {
-  const ground = Bodies.rectangle(1000, 700, 3000, 40, {
+  const ground = Bodies.rectangle(1400, 700, 3400, 40, {
     isStatic: true,
-    render: {
-      fillStyle: "#4caf50",
-    },
+    friction: 1.2,
+    frictionStatic: 2.5,
+    render: { fillStyle: '#7aa876' },
   });
 
   World.add(world, ground);
+  return ground;
 }

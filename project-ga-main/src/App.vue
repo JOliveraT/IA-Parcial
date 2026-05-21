@@ -6,23 +6,17 @@
         <button @click="sim?.start()">Iniciar</button>
         <button @click="sim?.pause()">Pausar</button>
         <button @click="sim?.reset()">Reiniciar</button>
-        <button @click="sim?.showBestNow()">Ver mejor individuo</button>
+        <button @click="sim?.showBestNow()">Ver mejor</button>
       </div>
     </header>
 
     <section class="hud">
-      <p>Generación actual: <strong>{{ stats.generation }}</strong></p>
+      <p>Generación: <strong>{{ stats.generation }}</strong></p>
       <p>Mejor distancia: <strong>{{ stats.bestDistance.toFixed(1) }}</strong></p>
       <p>Estado: <strong>{{ stats.status }}</strong></p>
     </section>
 
     <canvas id="world"></canvas>
-
-    <details class="details">
-      <summary>Opciones avanzadas</summary>
-      <button @click="sim?.step()">Ejecutar 1 generación</button>
-      <p>Úsalo solo para pruebas puntuales. El flujo principal recomendado es automático con “Iniciar”.</p>
-    </details>
   </main>
 </template>
 
