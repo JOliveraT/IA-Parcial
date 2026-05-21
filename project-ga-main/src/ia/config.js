@@ -1,7 +1,7 @@
 export const IA_CONFIG = {
   populationSize: 50,
   maxGenerations: 500,
-  maxSteps: 600,
+  maxSteps: 720,
   fixedDeltaSeconds: 1 / 60,
   tournamentSize: 3,
   eliteSize: 2,
@@ -13,7 +13,7 @@ export const IA_CONFIG = {
   hillClimbEvery: 10,
   hillClimbNeighbors: 4,
   hillClimbSigma: 0.04,
-  goalX: 2200,
+  goalX: 1900,
   startX: 120,
-  generationReplayPauseMs: 220,
+  generationReplayPauseMs: 420,
 };

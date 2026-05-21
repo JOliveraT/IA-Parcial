@@ -6,12 +6,12 @@ const { Bodies, Constraint, Composite, Body } = Matter;
 const deg = (v) => (v * Math.PI) / 180;
 const clamp = (v, mn, mx) => Math.max(mn, Math.min(mx, v));
 
-const HIP_MIN = deg(-70);
-const HIP_MAX = deg(70);
+const HIP_MIN = deg(-55);
+const HIP_MAX = deg(55);
 const KNEE_MIN = deg(0);
-const KNEE_MAX = deg(130);
-const BODY_MIN = deg(-35);
-const BODY_MAX = deg(35);
+const KNEE_MAX = deg(120);
+const BODY_MIN = deg(-24);
+const BODY_MAX = deg(24);
 
 export class Creature {
   constructor(world, chromosome, config = {}) {
@@ -23,13 +23,13 @@ export class Creature {
     const defaults = {
       startX: 120,
       groundTopY: 680,
-      bodyWidth: 84,
-      bodyHeight: 24,
-      femurLength: 48,
-      tibiaLength: 52,
-      femurWidth: 12,
-      tibiaWidth: 10,
-      hipSpread: 3,
+      bodyWidth: 76,
+      bodyHeight: 30,
+      femurLength: 54,
+      tibiaLength: 56,
+      femurWidth: 14,
+      tibiaWidth: 11,
+      hipSpread: 7,
     };
     this.dimensions = { ...defaults, ...config };
     this.startX = this.dimensions.startX;
@@ -71,11 +71,11 @@ export class Creature {
       Constraint.create({ bodyA: this.rightThigh, pointA: { x: 0, y: d.femurLength / 2 }, bodyB: this.rightCalf, pointB: { x: 0, y: -d.tibiaLength / 2 }, stiffness: 0.98, length: 0, render: { visible: false } }),
     ];
 
-    Body.setAngle(this.torso, deg(2));
-    Body.setAngle(this.leftThigh, deg(-20));
-    Body.setAngle(this.rightThigh, deg(20));
-    Body.setAngle(this.leftCalf, deg(16));
-    Body.setAngle(this.rightCalf, deg(-16));
+    Body.setAngle(this.torso, deg(-7));
+    Body.setAngle(this.leftThigh, deg(-14));
+    Body.setAngle(this.rightThigh, deg(14));
+    Body.setAngle(this.leftCalf, deg(20));
+    Body.setAngle(this.rightCalf, deg(20));
 
     this.parts = [this.torso, this.leftThigh, this.rightThigh, this.leftCalf, this.rightCalf];
     Composite.add(this.world, [...this.parts, ...this.constraints]);
