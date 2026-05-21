@@ -14,12 +14,11 @@ const { Engine, Composite, Render, Events } = Matter;
 
 const START_X = IA_CONFIG.startX;
 const GOAL_X = IA_CONFIG.goalX;
-const START_Y = 540;
 const START_MARKER_X = 80;
 const GOAL_MARKER_X = GOAL_X;
 const GROUND_Y = 620;
-const FALL_Y_LIMIT = GROUND_Y - 44;
-const TORSO_GROUND_LIMIT = GROUND_Y - 8;
+const FALL_Y_LIMIT = GROUND_Y - 24;
+const TORSO_GROUND_LIMIT = GROUND_Y - 4;
 const MAX_BODY_ANGLE = (75 * Math.PI) / 180;
 
 export function createSimulation(statsRef, optionsRef) {
@@ -102,7 +101,7 @@ export function createSimulation(statsRef, optionsRef) {
   function evaluateOne(genes) {
     const h = createWorld({ headless: true });
     createGround(h.world);
-    const creature = new Creature(h.world, START_X, START_Y, genes);
+    const creature = new Creature(h.world, genes, { startX: START_X, groundY: GROUND_Y });
 
     let bestX = START_X;
     let validBestX = START_X;
@@ -223,7 +222,7 @@ export function createSimulation(statsRef, optionsRef) {
     stopReplay();
     clearActors(visual.world);
 
-    const creature = new Creature(visual.world, START_X, START_Y, genes);
+    const creature = new Creature(visual.world, genes, { startX: START_X, groundY: GROUND_Y });
     let steps = 0;
     replayTimer = setInterval(() => {
       creature.update(IA_CONFIG.fixedDelta);
