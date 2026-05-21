@@ -1,5 +1,5 @@
 import { IA_CONFIG } from '../ia/config';
-import { randomChromosome, decodeChromosome, CHROMOSOME_LAYOUT } from '../ia/chromosome';
+import { randomChromosome, decodeChromosome, CHROMOSOME_LAYOUT, createMutatedWalkingSeed } from '../ia/chromosome';
 import { computeFitness } from '../ia/fitness';
 import { tournamentSelection } from '../ia/selection';
 import { blxAlpha } from '../ia/crossover';
@@ -10,6 +10,7 @@ import { Creature } from '../physics/creature';
 const GROUND_Y = 480;
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const lerp = (a, b, t) => a + (b - a) * t;
+const PHASE = { EVAL: 'Evaluando', REPLAY: 'Reproduciendo mejor intento', RESET: 'Reiniciando' };
 
 const creature = new Creature();
 const L = creature.cfg.femur;
@@ -47,7 +48,6 @@ function runAttempt(chromosome, visual = false) {
   const initialPose = samplePose(genes, 0);
   const initialVec = legVector(initialPose.bodyPitch, initialPose.leftHip, initialPose.leftKnee);
   let stanceFoot = { x: IA_CONFIG.startX + initialVec.x, y: GROUND_Y };
-  let prevPhase = 0;
   let bestX = IA_CONFIG.startX;
   let aliveSteps = 0;
   let validSteps = 0;
@@ -108,14 +108,14 @@ function runAttempt(chromosome, visual = false) {
     bestX = Math.max(bestX, x);
     if (bestX <= x + 0.02) stagnation += 1; else stagnation = 0;
 
-    const failed = torsoBottom >= GROUND_Y + 4 || invalidPosePenalty > 1400 || stagnation > 170;
+    const stagnated = aliveSteps > IA_CONFIG.minStepsBeforeStagnation && stagnation > 210;
+    const failed = torsoBottom >= GROUND_Y + 4 || invalidPosePenalty > 1400 || stagnated;
     const done = x >= IA_CONFIG.goalX;
     aliveSteps = step + 1;
 
     if (visual) frames.push({ x, y, pose, points, failed, done, stanceLeg: stance, stanceFoot: { ...stanceFoot } });
     if (failed || done) break;
 
-    prevPhase = phase;
     t += IA_CONFIG.fixedDeltaSeconds;
   }
 
@@ -130,6 +130,7 @@ function runAttempt(chromosome, visual = false) {
     alternationQuality: alternationGood / Math.max(1, alternationTotal),
     reachedGoal,
     failed,
+    aliveSteps,
     footSlipPenalty,
     stagnationPenalty: stagnation * 2,
     invalidPosePenalty,
@@ -148,16 +149,23 @@ export function createSimulation(statsRef) {
   resize(); addEventListener('resize', resize);
 
   const resetPopulation = () => {
-    population = Array.from({ length: IA_CONFIG.populationSize }, () => ({ chromosome: randomChromosome() }));
+    population = Array.from({ length: IA_CONFIG.populationSize }, (_, i) => {
+      if (i < IA_CONFIG.populationSize * 0.4) return { chromosome: createMutatedWalkingSeed(0.1) };
+      if (i < IA_CONFIG.populationSize * 0.8) return { chromosome: randomChromosome() };
+      return { chromosome: createMutatedWalkingSeed(0.25) };
+    });
     generation = 0; shown = null; replay = null; running = false; plateaus = 0;
-    statsRef.value = { generation: 0, bestDistance: 0, status: 'Pausado', replayLabel: 'Listo para iniciar' };
+    statsRef.value = { generation: 0, bestDistance: 0, status: 'Pausado', replayLabel: 'Listo para iniciar', phase: PHASE.RESET };
   };
 
   const nextPop = (sorted) => {
     const elites = sorted.slice(0, IA_CONFIG.eliteSize).map((e) => ({ chromosome: [...e.chromosome] }));
     const out = [...elites];
     while (out.length < IA_CONFIG.populationSize) {
-      if (plateaus >= IA_CONFIG.plateauLimit && Math.random() < IA_CONFIG.randomImmigrantRate) { out.push({ chromosome: randomChromosome() }); continue; }
+      if (plateaus >= IA_CONFIG.plateauLimit) {
+        if (Math.random() < IA_CONFIG.randomImmigrantRate) { out.push({ chromosome: randomChromosome() }); continue; }
+        if (Math.random() < IA_CONFIG.seedImmigrantRate) { out.push({ chromosome: createMutatedWalkingSeed(0.18) }); continue; }
+      }
       const a = tournamentSelection(sorted, IA_CONFIG.tournamentSize);
       const b = tournamentSelection(sorted, IA_CONFIG.tournamentSize);
       out.push({ chromosome: mutateGaussianBounded(blxAlpha(a.chromosome, b.chromosome, IA_CONFIG.crossoverAlpha), IA_CONFIG) });
@@ -175,7 +183,7 @@ export function createSimulation(statsRef) {
     shown = evals[0];
     generation += 1;
     replay = { frames: runAttempt(shown.chromosome, true).frames, idx: 0, wait: 0 };
-    statsRef.value = { generation, bestDistance: shown.distance, status: 'Reproduciendo mejor intento', replayLabel: `Mejor gen ${generation}` };
+    statsRef.value = { generation, bestDistance: shown.distance, status: `Generación ${generation} - Mejor intento`, replayLabel: `Mejor gen ${generation}`, phase: PHASE.REPLAY };
     population = nextPop(evals);
   };
 
@@ -184,9 +192,9 @@ export function createSimulation(statsRef) {
     ctx.fillStyle = '#f4a261'; ctx.strokeStyle = '#1f2937'; ctx.lineWidth = 2;
     ctx.beginPath(); frame.points.torso.forEach((p, i) => i ? ctx.lineTo(sx(p.x), p.y) : ctx.moveTo(sx(p.x), p.y)); ctx.closePath(); ctx.fill(); ctx.stroke();
     const drawLeg = (hip, knee, foot, c, stanceLeg) => {
-      ctx.strokeStyle = c; ctx.lineWidth = 9; ctx.beginPath(); ctx.moveTo(sx(hip.x), hip.y); ctx.lineTo(sx(knee.x), knee.y); ctx.stroke();
-      ctx.lineWidth = 8; ctx.beginPath(); ctx.moveTo(sx(knee.x), knee.y); ctx.lineTo(sx(foot.x), foot.y); ctx.stroke();
-      if (stanceLeg) { ctx.fillStyle = '#111827'; ctx.fillRect(sx(foot.x) - 7, GROUND_Y - 3, 14, 6); }
+      ctx.strokeStyle = c; ctx.lineWidth = 12; ctx.beginPath(); ctx.moveTo(sx(hip.x), hip.y); ctx.lineTo(sx(knee.x), knee.y); ctx.stroke();
+      ctx.lineWidth = 10; ctx.beginPath(); ctx.moveTo(sx(knee.x), knee.y); ctx.lineTo(sx(foot.x), foot.y); ctx.stroke();
+      if (stanceLeg) { ctx.fillStyle = '#111827'; ctx.fillRect(sx(foot.x) - 9, GROUND_Y - 4, 18, 8); }
     };
     drawLeg(frame.points.hipL, frame.points.left.knee, frame.points.left.foot, '#264653', frame.stanceLeg === 'left');
     drawLeg(frame.points.hipR, frame.points.right.knee, frame.points.right.foot, '#2a9d8f', frame.stanceLeg === 'right');
@@ -194,19 +202,30 @@ export function createSimulation(statsRef) {
 
   const loop = () => {
     ctx.fillStyle = '#edf6ff'; ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.strokeStyle = '#46a758'; ctx.lineWidth = 4; ctx.beginPath(); ctx.moveTo(0, GROUND_Y); ctx.lineTo(canvas.width, GROUND_Y); ctx.stroke();
 
-    if (running && !replay) { statsRef.value = { ...statsRef.value, status: 'Entrenando' }; trainOneGeneration(); }
+    if (running && !replay) { statsRef.value = { ...statsRef.value, status: `Evaluando generación ${generation + 1}`, phase: PHASE.EVAL }; trainOneGeneration(); }
 
     if (replay) {
       const frame = replay.frames[Math.min(replay.idx, replay.frames.length - 1)];
-      const cameraX = frame.x - 250;
+      const cameraX = Math.max(0, frame.x - 230);
+
+      ctx.strokeStyle = '#46a758'; ctx.lineWidth = 4; ctx.beginPath(); ctx.moveTo(0, GROUND_Y); ctx.lineTo(canvas.width, GROUND_Y); ctx.stroke();
+      const goalScreenX = IA_CONFIG.goalX - cameraX;
+      if (goalScreenX > -40 && goalScreenX < canvas.width + 40) {
+        ctx.strokeStyle = '#ef4444'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(goalScreenX, GROUND_Y - 140); ctx.lineTo(goalScreenX, GROUND_Y + 8); ctx.stroke();
+      }
+
       drawCreature(frame, cameraX);
       if (replay.idx < replay.frames.length - 1) replay.idx += 1;
       else {
         replay.wait += 16;
-        statsRef.value = { ...statsRef.value, status: frame.done ? 'Meta alcanzada' : frame.failed ? 'Falló' : 'Reproduciendo mejor intento' };
+        statsRef.value = {
+          ...statsRef.value,
+          status: frame.done ? 'Meta alcanzada' : frame.failed ? 'Falló' : `Generación ${generation} - Mejor intento`,
+          phase: frame.failed ? PHASE.RESET : PHASE.REPLAY,
+        };
         if (replay.wait > IA_CONFIG.generationReplayPauseMs) {
+          statsRef.value = { ...statsRef.value, status: 'Reiniciando en A', phase: PHASE.RESET };
           replay = null;
           if (shown.reachedGoalFinal || generation >= IA_CONFIG.maxGenerations) running = false;
         }
