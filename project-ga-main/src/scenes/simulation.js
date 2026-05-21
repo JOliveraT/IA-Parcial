@@ -1,5 +1,5 @@
 import { IA_CONFIG } from '../ia/config';
-import { randomChromosome, decodeChromosome, CHROMOSOME_LAYOUT, createMutatedWalkingSeed } from '../ia/chromosome';
+import { randomChromosome, decodeChromosome, CHROMOSOME_LAYOUT, createMutatedWalkingSeed, createWalkingSeed } from '../ia/chromosome';
 import { computeFitness } from '../ia/fitness';
 import { tournamentSelection } from '../ia/selection';
 import { blxAlpha } from '../ia/crossover';
@@ -76,7 +76,7 @@ function runAttempt(chromosome, visual = false) {
       const swingPenetration = Math.max(0, swingFoot.y - GROUND_Y);
       const nearGround = Math.abs(swingFoot.y - GROUND_Y) <= CONTACT_THRESHOLD;
       const aboveOrOnGround = swingFoot.y <= GROUND_Y;
-      const validReach = Math.abs(swingFoot.x - stanceFoot.x) > 8;
+      const validReach = Math.abs(swingFoot.x - stanceFoot.x) > 6;
       alternationTotal += 1;
       if (nearGround && aboveOrOnGround && validReach) {
         stance = desiredStance;
@@ -84,7 +84,7 @@ function runAttempt(chromosome, visual = false) {
         validSteps += 1;
         alternationGood += 1;
       } else {
-        invalidPosePenalty += 30;
+        invalidPosePenalty += 12;
         invalidGroundContactPenalty += 20;
         if (swingPenetration > 0) {
           groundPenetrationPenalty += swingPenetration * GROUND_PENETRATION_PENALTY;
@@ -117,8 +117,8 @@ function runAttempt(chromosome, visual = false) {
     const hipsGap = Math.abs(points.hipL.x - points.hipR.x);
     const legsCrossed = (points.left.knee.x - points.right.knee.x) * (points.left.foot.x - points.right.foot.x) < -20;
 
-    if (Math.abs(pose.bodyPitch) > 0.62) invalidPosePenalty += 20;
-    if (torsoBottom >= GROUND_Y - 2) invalidPosePenalty += 28;
+    if (Math.abs(pose.bodyPitch) > 0.72) invalidPosePenalty += 14;
+    if (torsoBottom >= GROUND_Y + 4) invalidPosePenalty += 22;
     if (torsoBottom < GROUND_Y - 210) invalidPosePenalty += 8;
     if (legsCrossed) invalidPosePenalty += 25;
     if (hipsGap < 8) invalidPosePenalty += 5;
@@ -128,9 +128,9 @@ function runAttempt(chromosome, visual = false) {
     bestX = Math.max(bestX, x);
     if (bestX <= x + 0.02) stagnation += 1; else stagnation = 0;
 
-    const stagnated = aliveSteps > IA_CONFIG.minStepsBeforeStagnation && stagnation > 210;
-    const failed = torsoBottom >= GROUND_Y + 4
-      || invalidPosePenalty > 1400
+    const stagnated = aliveSteps > IA_CONFIG.minStepsBeforeStagnation && stagnation > 260;
+    const failed = torsoBottom >= GROUND_Y + 12
+      || invalidPosePenalty > 2200
       || maxPenetration > GROUND_PENETRATION_FAIL_PX
       || stagnated;
     const done = x >= IA_CONFIG.goalX;
@@ -185,7 +185,18 @@ function runAttempt(chromosome, visual = false) {
     energyPenalty,
   });
 
-  return { chromosome: [...chromosome], genes, fitness, distance, failed, reachedGoalFinal: reachedGoal, frames };
+  return { chromosome: [...chromosome], genes, fitness, distance, failed, reachedGoalFinal: reachedGoal, validSteps, aliveSteps, frames };
+}
+
+export function validateWalkingSeed() {
+  const seed = createWalkingSeed();
+  const result = runAttempt(seed, false);
+  return {
+    distance: Number(result.distance.toFixed(2)),
+    validSteps: result.validSteps,
+    fell: result.failed,
+    fitness: Number(result.fitness.toFixed(2)),
+  };
 }
 
 export function createSimulation(statsRef) {
@@ -198,9 +209,9 @@ export function createSimulation(statsRef) {
 
   const resetPopulation = () => {
     population = Array.from({ length: IA_CONFIG.populationSize }, (_, i) => {
-      if (i < IA_CONFIG.populationSize * 0.4) return { chromosome: createMutatedWalkingSeed(0.1) };
-      if (i < IA_CONFIG.populationSize * 0.8) return { chromosome: randomChromosome() };
-      return { chromosome: createMutatedWalkingSeed(0.25) };
+      if (i < IA_CONFIG.populationSize * 0.6) return { chromosome: createMutatedWalkingSeed(0.06) };
+      if (i < IA_CONFIG.populationSize * 0.8) return { chromosome: createMutatedWalkingSeed(0.18) };
+      return { chromosome: randomChromosome() };
     });
     generation = 0; shown = null; replay = null; running = false; plateaus = 0;
     statsRef.value = { generation: 0, bestDistance: 0, status: 'Pausado', replayLabel: 'Listo para iniciar', phase: PHASE.RESET };
@@ -211,8 +222,9 @@ export function createSimulation(statsRef) {
     const out = [...elites];
     while (out.length < IA_CONFIG.populationSize) {
       if (plateaus >= IA_CONFIG.plateauLimit) {
-        if (Math.random() < IA_CONFIG.randomImmigrantRate) { out.push({ chromosome: randomChromosome() }); continue; }
-        if (Math.random() < IA_CONFIG.seedImmigrantRate) { out.push({ chromosome: createMutatedWalkingSeed(0.18) }); continue; }
+        if (Math.random() < 0.5) { out.push({ chromosome: randomChromosome() }); continue; }
+        out.push({ chromosome: createMutatedWalkingSeed(0.14) });
+        continue;
       }
       const a = tournamentSelection(sorted, IA_CONFIG.tournamentSize);
       const b = tournamentSelection(sorted, IA_CONFIG.tournamentSize);
@@ -255,7 +267,7 @@ export function createSimulation(statsRef) {
 
     if (replay) {
       const frame = replay.frames[Math.min(replay.idx, replay.frames.length - 1)];
-      const cameraX = Math.max(0, frame.x - 230);
+      const cameraX = Math.max(0, frame.x - 150);
 
       ctx.strokeStyle = '#46a758'; ctx.lineWidth = 4; ctx.beginPath(); ctx.moveTo(0, GROUND_Y); ctx.lineTo(canvas.width, GROUND_Y); ctx.stroke();
       const goalScreenX = IA_CONFIG.goalX - cameraX;
@@ -289,6 +301,12 @@ export function createSimulation(statsRef) {
   };
 
   resetPopulation();
+  const seedValidation = validateWalkingSeed();
+  console.info('Walking seed validation:');
+  console.info(`distance: ${seedValidation.distance}`);
+  console.info(`validSteps: ${seedValidation.validSteps}`);
+  console.info(`fell: ${seedValidation.fell}`);
+  console.info(`fitness: ${seedValidation.fitness}`);
   requestAnimationFrame(loop);
 
   return {
@@ -296,5 +314,6 @@ export function createSimulation(statsRef) {
     pause() { running = false; statsRef.value = { ...statsRef.value, status: 'Pausado' }; },
     reset() { resetPopulation(); },
     showBestNow() { if (shown) replay = { frames: runAttempt(shown.chromosome, true).frames, idx: 0, wait: 0 }; },
+    showWalkingSeed() { replay = { frames: runAttempt(createWalkingSeed(), true).frames, idx: 0, wait: 0 }; },
   };
 }

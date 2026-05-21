@@ -1,13 +1,13 @@
 export function computeFitness(metrics) {
   const reachedGoalBonus = metrics.reachedGoal && !metrics.failed ? 3200 : 0;
-  const fallPenalty = metrics.failed ? 680 : 0;
+  const fallPenalty = metrics.failed ? 760 : 0;
 
   const fitness =
     metrics.validDistance * 10 +
-    metrics.validSteps * 35 +
-    metrics.stanceQuality * 100 +
+    metrics.validSteps * 60 +
+    metrics.stanceQuality * 80 +
     metrics.alternationQuality * 80 +
-    (metrics.aliveSteps ?? 0) * 0.2 +
+    (metrics.aliveSteps ?? 0) * 0.15 +
     reachedGoalBonus -
     fallPenalty -
     (metrics.footSlipPenalty ?? 0) -
