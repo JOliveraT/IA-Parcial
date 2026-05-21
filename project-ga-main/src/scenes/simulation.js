@@ -8,6 +8,9 @@ import { hillClimbElite } from '../ia/localSearch';
 import { Creature } from '../physics/creature';
 
 const GROUND_Y = 480;
+const CONTACT_THRESHOLD = 12;
+const GROUND_PENETRATION_FAIL_PX = 15;
+const GROUND_PENETRATION_PENALTY = 10;
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const lerp = (a, b, t) => a + (b - a) * t;
 const PHASE = { EVAL: 'Evaluando', REPLAY: 'Reproduciendo mejor intento', RESET: 'Reiniciando' };
@@ -53,6 +56,8 @@ function runAttempt(chromosome, visual = false) {
   let validSteps = 0;
   let stagnation = 0;
   let invalidPosePenalty = 0;
+  let groundPenetrationPenalty = 0;
+  let invalidGroundContactPenalty = 0;
   let footSlipPenalty = 0;
   let energyPenalty = 0;
   let alternationGood = 0;
@@ -68,16 +73,22 @@ function runAttempt(chromosome, visual = false) {
     if (desiredStance !== stance) {
       const prevPoints = creature.getPosePoints({ x: bestX, y: GROUND_Y - 120, pose });
       const swingFoot = desiredStance === 'left' ? prevPoints.left.foot : prevPoints.right.foot;
-      const nearGround = Math.abs(swingFoot.y - GROUND_Y) < 16;
+      const swingPenetration = Math.max(0, swingFoot.y - GROUND_Y);
+      const nearGround = Math.abs(swingFoot.y - GROUND_Y) <= CONTACT_THRESHOLD;
+      const aboveOrOnGround = swingFoot.y <= GROUND_Y;
       const validReach = Math.abs(swingFoot.x - stanceFoot.x) > 8;
       alternationTotal += 1;
-      if (nearGround && validReach) {
+      if (nearGround && aboveOrOnGround && validReach) {
         stance = desiredStance;
         stanceFoot = { x: swingFoot.x, y: GROUND_Y };
         validSteps += 1;
         alternationGood += 1;
       } else {
         invalidPosePenalty += 30;
+        invalidGroundContactPenalty += 20;
+        if (swingPenetration > 0) {
+          groundPenetrationPenalty += swingPenetration * GROUND_PENETRATION_PENALTY;
+        }
       }
     }
 
@@ -90,8 +101,17 @@ function runAttempt(chromosome, visual = false) {
 
     const points = creature.getPosePoints({ x, y, pose });
     const stanceFootNow = stance === 'left' ? points.left.foot : points.right.foot;
+    const swingFootNow = stance === 'left' ? points.right.foot : points.left.foot;
+    stanceFoot.y = GROUND_Y;
     footSlipPenalty += Math.abs(stanceFootNow.x - stanceFoot.x) * 2.2;
     stanceQuality += clamp(1 - Math.abs(stanceFootNow.x - stanceFoot.x) / 12, 0, 1);
+
+    const stancePenetration = Math.max(0, stanceFootNow.y - GROUND_Y);
+    const swingPenetration = Math.max(0, swingFootNow.y - GROUND_Y);
+    const maxPenetration = Math.max(stancePenetration, swingPenetration);
+    groundPenetrationPenalty += (stancePenetration + swingPenetration) * GROUND_PENETRATION_PENALTY;
+    if (stancePenetration > 0.25) invalidGroundContactPenalty += 45;
+    if (swingPenetration > 0.25) invalidGroundContactPenalty += 18;
 
     const torsoBottom = Math.max(...points.torso.map((p) => p.y));
     const hipsGap = Math.abs(points.hipL.x - points.hipR.x);
@@ -109,11 +129,37 @@ function runAttempt(chromosome, visual = false) {
     if (bestX <= x + 0.02) stagnation += 1; else stagnation = 0;
 
     const stagnated = aliveSteps > IA_CONFIG.minStepsBeforeStagnation && stagnation > 210;
-    const failed = torsoBottom >= GROUND_Y + 4 || invalidPosePenalty > 1400 || stagnated;
+    const failed = torsoBottom >= GROUND_Y + 4
+      || invalidPosePenalty > 1400
+      || maxPenetration > GROUND_PENETRATION_FAIL_PX
+      || stagnated;
     const done = x >= IA_CONFIG.goalX;
     aliveSteps = step + 1;
 
-    if (visual) frames.push({ x, y, pose, points, failed, done, stanceLeg: stance, stanceFoot: { ...stanceFoot } });
+    if (visual) {
+      const visualPoints = {
+        ...points,
+        left: {
+          ...points.left,
+          foot: { ...points.left.foot, y: Math.min(points.left.foot.y, GROUND_Y) },
+        },
+        right: {
+          ...points.right,
+          foot: { ...points.right.foot, y: Math.min(points.right.foot.y, GROUND_Y) },
+        },
+      };
+      frames.push({
+        x,
+        y,
+        pose,
+        points: visualPoints,
+        failed,
+        done,
+        stanceLeg: stance,
+        stanceFoot: { ...stanceFoot },
+        penetratedGround: maxPenetration > 0.25,
+      });
+    }
     if (failed || done) break;
 
     t += IA_CONFIG.fixedDeltaSeconds;
@@ -134,6 +180,8 @@ function runAttempt(chromosome, visual = false) {
     footSlipPenalty,
     stagnationPenalty: stagnation * 2,
     invalidPosePenalty,
+    groundPenetrationPenalty,
+    invalidGroundContactPenalty,
     energyPenalty,
   });
 
@@ -216,6 +264,11 @@ export function createSimulation(statsRef) {
       }
 
       drawCreature(frame, cameraX);
+      if (frame.penetratedGround) {
+        ctx.fillStyle = 'rgba(220, 38, 38, 0.75)';
+        ctx.font = 'bold 16px sans-serif';
+        ctx.fillText('Fallo: penetración del suelo', 18, 36);
+      }
       if (replay.idx < replay.frames.length - 1) replay.idx += 1;
       else {
         replay.wait += 16;
