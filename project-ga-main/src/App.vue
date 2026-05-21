@@ -14,6 +14,7 @@
       <p>Generación: <strong>{{ stats.generation }}</strong></p>
       <p>Mejor distancia: <strong>{{ stats.bestDistance.toFixed(1) }}</strong></p>
       <p>Estado: <strong>{{ stats.status }}</strong></p>
+      <p>Visual: <strong>{{ stats.replayLabel }}</strong></p>
     </section>
 
     <canvas id="world"></canvas>
@@ -24,7 +25,7 @@
 import { onMounted, ref } from 'vue';
 import { createSimulation } from './scenes/simulation';
 
-const stats = ref({ generation: 0, bestDistance: 0, reachedGoal: false, status: 'Pausado' });
+const stats = ref({ generation: 0, bestDistance: 0, reachedGoal: false, status: 'Pausado', replayLabel: 'Listo para iniciar' });
 let sim = null;
 
 onMounted(() => {
