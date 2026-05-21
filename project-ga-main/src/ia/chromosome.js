@@ -1,6 +1,6 @@
 const DEG = Math.PI / 180;
 
-const KEYFRAME_COUNT = 6;
+const KEYFRAME_COUNT = 8;
 const JOINT_KEYS = ['leftHip', 'leftKnee', 'rightHip', 'rightKnee', 'bodyPitch'];
 
 const JOINT_LIMITS = {
@@ -15,9 +15,9 @@ export const GENE_SPECS = [
   ...Array.from({ length: KEYFRAME_COUNT }).flatMap((_, frame) =>
     JOINT_KEYS.map((joint) => ({ key: `kf_${frame}_${joint}`, ...JOINT_LIMITS[joint] })),
   ),
-  { key: 'cycleDuration', min: 0.95, max: 2.4 },
-  { key: 'pushScale', min: 0.28, max: 1.1 },
-  { key: 'bodyHeightBias', min: -14, max: 14 },
+  { key: 'cycleDuration', min: 1.0, max: 2.6 },
+  { key: 'dutyFactor', min: 0.35, max: 0.65 },
+  { key: 'hipHeightBias', min: -16, max: 16 },
 ];
 
 const clamp = (v, min, max) => Math.max(min, Math.min(max, v));

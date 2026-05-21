@@ -1,68 +1,59 @@
 # Genetic Walker (Vue + Vite)
 
-Aplicación web donde una criatura poligonal simple aprende a caminar de **A → B** usando un **algoritmo genético** con control articular semi-cinemático.
+Aplicación web donde una criatura simple aprende a caminar de **A → B** con algoritmo genético sobre **patrones articulares**.
 
-## Qué cambió y por qué
-Se dejó atrás el enfoque ragdoll puro porque no mostraba aprendizaje estable generación por generación. Ahora el proyecto usa un modelo semi-cinemático articulado para que el GA aprenda **patrones de articulaciones**, no velocidad artificial.
+## Modelo de locomoción (actual)
+- Avatar: torso poligonal + 2 piernas (muslo + tibia).
+- Inicio de cada intento quieto en A y apoyado en suelo.
+- El ciclo se codifica con **8 keyframes**: `leftHip`, `leftKnee`, `rightHip`, `rightKnee`, `bodyPitch`.
+- Se interpola suavemente entre keyframes.
 
-## Avatar y simulación
-- Cuerpo superior poligonal (torso).
-- Dos piernas.
-- Cada pierna con 2 segmentos (fémur + tibia).
-- Articulaciones visibles de cadera y rodilla.
-- Inicio quieto y apoyado en el suelo en cada intento.
+## Apoyo alternado plantado
+La locomoción usa una pierna de apoyo (stance) y una de recuperación (swing):
+1. Según `phase` y `dutyFactor`, se decide qué pierna está en apoyo.
+2. La punta de tibia de la pierna stance se fija al suelo como `stanceFootWorld`.
+3. Con cinemática de esa pierna (ángulos de cadera/rodilla), se calcula la cadera/torso.
+4. El cuerpo avanza solo si esa cinemática desplaza la cadera respecto al punto plantado.
+5. Al cambiar de fase, la nueva pierna debe tocar suelo para convertirse en el nuevo apoyo.
 
-Cada individuo codifica un ciclo de **keyframes articulares** con:
-- `leftHip`, `leftKnee`, `rightHip`, `rightKnee`, `bodyPitch`.
-
-En cada frame se interpola entre keyframes para obtener la pose objetivo.
-
-## Cómo se genera el avance
-La distancia no se calcula con una fórmula mágica del tipo `x += gaitQuality`.
-
-El avance sale del contacto de las piernas:
-1. Se calcula cinemática directa (cadera → rodilla → extremo de tibia).
-2. Se detecta contacto del extremo de tibia con el suelo.
-3. Si hay apoyo válido y el extremo se mueve hacia atrás relativo al cuerpo, se aplica empuje hacia adelante.
-4. Se aplica fricción y límites de velocidad.
-
-Sin contacto útil no hay empuje, por lo tanto no hay progreso real.
+> No hay avance por fórmula artificial (`x += gaitQuality`, `x += speed`, etc.).
 
 ## Fallos de intento
-Un intento puede fallar por:
-- torso tocando suelo;
+Se corta el intento si aparece inestabilidad clara:
+- torso demasiado bajo/alto;
 - inclinación excesiva;
-- poses inválidas (piernas cruzadas);
-- estancamiento largo;
-- comportamiento inestable.
+- cruce absurdo de piernas;
+- estancamiento prolongado;
+- mala transición de apoyo.
 
 ## Fitness
-Se usa:
+Se optimiza:
+- distancia válida;
+- pasos válidos (transiciones stance correctas);
+- calidad de apoyo (poco deslizamiento del pie plantado);
+- alternancia correcta.
 
-`fitness = validDistance*10 + aliveSteps*0.2 + contactQualityAverage*80 + alternationScore*100 + bonusMeta - penalizaciones`
-
-Con penalizaciones por caída/fallo, estancamiento, energía excesiva y poses inválidas.
+Con penalizaciones por caída/fallo, deslizamiento de pie, estancamiento, pose inválida y energía excesiva.
 
 ## GA del curso (mantenido)
-- Inicialización aleatoria real-coded.
+- Inicialización aleatoria.
 - Selección por torneo.
 - Crossover BLX-α.
 - Mutación gaussiana acotada.
 - Elitismo.
-- Diversificación con inmigrantes aleatorios en estancamiento.
-- Intensificación con hill climbing ligero sobre élites.
+- Diversificación con inmigrantes aleatorios.
+- Intensificación con hill climbing ligero.
 
-## Flujo visual por generación
-1. Se evalúa internamente toda la generación.
+## Replay completo por generación
+1. Se evalúa toda la población internamente.
 2. Se selecciona el mejor individuo.
-3. Se reproduce el intento completo del mejor (inicio quieto, movimiento, avance/fallo/meta).
-4. Pausa corta y reset.
-5. Siguiente generación.
+3. Se reproduce **todo** su intento desde A (avance/fallo/meta).
+4. Recién después se pasa a la generación siguiente.
 
-UI visible:
-- Generación.
+UI:
+- Generación actual.
 - Mejor distancia.
-- Estado: Entrenando / Reproduciendo mejor intento / Falló / Meta alcanzada.
+- Estado: Entrenando / Reproduciendo / Falló / Meta alcanzada.
 
 ## Ejecución
 ```bash
