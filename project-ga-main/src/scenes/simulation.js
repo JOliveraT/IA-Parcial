@@ -1,6 +1,6 @@
 import Matter from 'matter-js';
 import { IA_CONFIG } from '../ia/config';
-import { randomChromosome, decodeChromosome } from '../ia/chromosome';
+import { randomChromosome } from '../ia/chromosome';
 import { computeFitness } from '../ia/fitness';
 import { tournamentSelection } from '../ia/selection';
 import { blxAlpha } from '../ia/crossover';
@@ -10,21 +10,36 @@ import { createWorld } from '../physics/world';
 import { createGround } from '../physics/ground';
 import { Creature } from '../physics/creature';
 
-const { Engine, Composite } = Matter;
+const { Engine, Composite, Bodies, World, Render } = Matter;
+const START_X = IA_CONFIG.startX;
+const GOAL_X = IA_CONFIG.goalX;
 
 export function createSimulation(statsRef, optionsRef) {
   const visual = createWorld({ headless: false });
   createGround(visual.world);
+  createMarkers(visual.world);
 
   let population = [];
   let running = false;
+  let bestEver = null;
+
+  const defaultStats = () => ({ generation: 0, bestDistance: 0, reachedGoal: false, bestFitness: 0, details: [] });
 
   function resetPopulation() {
-    population = Array.from({ length: IA_CONFIG.populationSize }, () => ({ genes: randomChromosome(), fitness: 0 }));
-    statsRef.value = { ...statsRef.value, generation: 0, history: [], plateauGenerations: 0 };
+    population = Array.from({ length: IA_CONFIG.populationSize }, () => ({ genes: randomChromosome(), fitness: 0, distance: 0, reachedGoal: false }));
+    statsRef.value = defaultStats();
+    bestEver = null;
+    renderBest(population[0].genes);
   }
 
-  function clearWorld(world) {
+  function createMarkers(world) {
+    const startPole = Bodies.rectangle(START_X, 620, 6, 120, { isStatic: true, render: { fillStyle: '#2a9d8f' } });
+    const goalPole = Bodies.rectangle(GOAL_X, 620, 6, 120, { isStatic: true, render: { fillStyle: '#e63946' } });
+    const goalBanner = Bodies.rectangle(GOAL_X + 18, 575, 30, 20, { isStatic: true, render: { fillStyle: '#e63946' } });
+    World.add(world, [startPole, goalPole, goalBanner]);
+  }
+
+  function clearActors(world) {
     const all = Composite.allBodies(world).filter((b) => !b.isStatic);
     Composite.remove(world, all);
   }
@@ -32,137 +47,114 @@ export function createSimulation(statsRef, optionsRef) {
   function evaluateOne(genes) {
     const h = createWorld({ headless: true });
     createGround(h.world);
-    const creature = new Creature(h.world, 100, 578, genes);
-    let sumAbsAngle = 0; let minY = creature.body.position.y; let maxY = minY; let backward = 0; let dragPenalty = 0;
-    const earlyStep = Math.floor(IA_CONFIG.maxSteps * 0.3);
-    let steps = 0; let fell = false;
+    const creature = new Creature(h.world, START_X, 535, genes);
+    let bestX = START_X;
+    let lastAdvanceStep = 0;
+    let lowTorsoPenalty = 0;
+    let rotationPenalty = 0;
+    let chaoticPenalty = 0;
 
-    for (; steps < IA_CONFIG.maxSteps; steps++) {
+    let reachedGoal = false;
+    let fell = false;
+    let step = 0;
+
+    for (; step < IA_CONFIG.maxSteps; step++) {
       creature.update(IA_CONFIG.fixedDelta);
       Engine.update(h.engine, IA_CONFIG.fixedDelta);
-      const x = creature.body.position.x;
-      const dx = x - creature.startX;
-      sumAbsAngle += Math.abs(creature.body.angle);
-      minY = Math.min(minY, creature.body.position.y);
-      maxY = Math.max(maxY, creature.body.position.y);
-      if (dx < 0) backward += Math.abs(dx) * 0.02;
-      if (Math.abs(creature.body.angle) > 1.3) dragPenalty += 0.4;
-      if (creature.body.position.y > 665 || Math.abs(creature.body.angle) > 1.65) { fell = true; break; }
-      if (steps > earlyStep && dx < 8) break;
-      if (dx < -90 || x > 2500 || x < -200) break;
+
+      const torso = creature.body;
+      bestX = Math.max(bestX, torso.position.x);
+      if (torso.position.x > START_X + 5) lastAdvanceStep = step;
+
+      if (Math.abs(torso.angle) > 0.9) rotationPenalty += 0.8;
+      if (torso.position.y > 600) lowTorsoPenalty += 1.5;
+      chaoticPenalty += Math.abs(creature.leftThigh.angularVelocity) > 3 ? 0.5 : 0;
+
+      if (torso.position.y > 670 || Math.abs(torso.angle) > 1.6) {
+        fell = true;
+        break;
+      }
+      if (torso.position.x >= GOAL_X) {
+        reachedGoal = true;
+        break;
+      }
+      if (step - lastAdvanceStep > 140) break;
     }
 
-    const deltaX = creature.body.position.x - creature.startX;
-    const metrics = {
-      deltaX,
-      survivalRatio: steps / IA_CONFIG.maxSteps,
-      avgTorsoAngle: sumAbsAngle / Math.max(1, steps),
-      verticalBounce: (maxY - minY) / 100,
-      controlEffort: creature.controlEffort / Math.max(1, steps),
-      fell,
-      dragPenalty: dragPenalty + backward,
-    };
-
-    return computeFitness(metrics);
-  }
-
-  function diversity(pop) {
-    const geneCount = pop[0].genes.length;
-    let d = 0;
-    for (let g = 0; g < geneCount; g++) {
-      const avg = pop.reduce((a, p) => a + p.genes[g], 0) / pop.length;
-      const v = pop.reduce((a, p) => a + (p.genes[g] - avg) ** 2, 0) / pop.length;
-      d += Math.sqrt(v);
-    }
-    return d / geneCount;
+    const distance = Math.max(0, bestX - START_X);
+    const backwardPenalty = Math.max(0, START_X - creature.body.position.x) * 0.8;
+    const fitness = computeFitness({ distance, stepsAlive: step, reachedGoal, fell, lowTorsoPenalty, rotationPenalty, backwardPenalty, chaoticPenalty });
+    return { fitness, distance, reachedGoal };
   }
 
   function runGeneration() {
-    const t0 = performance.now();
-    population.forEach((p) => { p.fitness = evaluateOne(p.genes); });
+    population.forEach((p) => {
+      const result = evaluateOne(p.genes);
+      p.fitness = result.fitness;
+      p.distance = result.distance;
+      p.reachedGoal = result.reachedGoal;
+    });
     population.sort((a, b) => b.fitness - a.fitness);
-    const elapsed = performance.now() - t0;
 
-    const fits = population.map((p) => p.fitness).sort((a, b) => a - b);
-    const avgFitness = fits.reduce((a, b) => a + b, 0) / fits.length;
     const best = population[0];
-    const prevBest = statsRef.value.bestFitness;
-    const plateauGenerations = best.fitness > prevBest + 1e-6 ? 0 : (statsRef.value.plateauGenerations + 1);
-    const isPlateau = plateauGenerations >= IA_CONFIG.plateauLimit;
+    if (!bestEver || best.fitness > bestEver.fitness) bestEver = { ...best, genes: [...best.genes] };
 
-    let hillClimbApplied = false;
-    if (optionsRef.value.hillClimbEnabled && (statsRef.value.generation % IA_CONFIG.hillClimbEvery === 0 || isPlateau)) {
-      const res = hillClimbElite(best, evaluateOne, IA_CONFIG);
-      hillClimbApplied = res.improved;
-      if (res.elite.fitness > best.fitness) population[0] = res.elite;
-      population.sort((a, b) => b.fitness - a.fitness);
+    if (statsRef.value.generation > 0 && statsRef.value.generation % IA_CONFIG.hillClimbEvery === 0) {
+      const improved = hillClimbElite(best, (genes) => evaluateOne(genes).fitness, IA_CONFIG);
+      if (improved.improved && improved.elite.fitness > best.fitness) {
+        population[0] = { ...improved.elite, distance: best.distance, reachedGoal: best.reachedGoal };
+      }
     }
 
-    const sigma = optionsRef.value.adaptiveMutation && isPlateau
-      ? (diversity(population) < IA_CONFIG.diversityLowThreshold ? IA_CONFIG.adaptiveSigmaHigh : IA_CONFIG.adaptiveSigmaMedium)
-      : IA_CONFIG.mutationSigma;
-
-    const next = [ ...population.slice(0, IA_CONFIG.eliteSize).map((p) => ({ ...p, genes: [...p.genes] })) ];
+    const next = [...population.slice(0, IA_CONFIG.eliteSize).map((e) => ({ ...e, genes: [...e.genes] }))];
     while (next.length < IA_CONFIG.populationSize) {
-      if (isPlateau && Math.random() < IA_CONFIG.randomImmigrantRate) {
-        next.push({ genes: randomChromosome(), fitness: 0 });
-        continue;
-      }
       const a = tournamentSelection(population, IA_CONFIG.tournamentSize);
       const b = tournamentSelection(population, IA_CONFIG.tournamentSize);
-      const child = mutateGaussianBounded(blxAlpha(a.genes, b.genes, IA_CONFIG.crossoverAlpha), { mutationRate: IA_CONFIG.mutationRate, mutationSigma: sigma });
-      next.push({ genes: child, fitness: 0 });
+      const child = mutateGaussianBounded(blxAlpha(a.genes, b.genes, IA_CONFIG.crossoverAlpha), IA_CONFIG);
+      next.push({ genes: child, fitness: 0, distance: 0, reachedGoal: false });
     }
     population = next;
 
     const generation = statsRef.value.generation + 1;
-    const newStats = {
+    statsRef.value = {
       generation,
+      bestDistance: best.distance,
       bestFitness: best.fitness,
-      avgFitness,
-      medianFitness: fits[Math.floor(fits.length / 2)],
-      worstFitness: fits[0],
-      diversity: diversity(population),
-      plateauGenerations,
-      evalMs: elapsed,
-      evaluationsPerSecond: (IA_CONFIG.populationSize / Math.max(elapsed, 1)) * 1000,
-      bestGenes: decodeChromosome(best.genes),
-      hillClimbApplied,
-      adaptiveMutationApplied: sigma !== IA_CONFIG.mutationSigma,
-      history: [...statsRef.value.history.slice(-24), { generation, bestFitness: best.fitness, avgFitness }],
+      reachedGoal: best.reachedGoal,
+      details: [{ generation, fitness: best.fitness, distance: best.distance }],
     };
-    statsRef.value = newStats;
 
     if (optionsRef.value.showBest) renderBest(best.genes);
+
+    if (best.reachedGoal || generation >= IA_CONFIG.maxGenerations) running = false;
   }
 
   function renderBest(genes) {
-    clearWorld(visual.world);
-    createGround(visual.world);
-    const creature = new Creature(visual.world, 100, 578, genes);
+    clearActors(visual.world);
+    const creature = new Creature(visual.world, START_X, 535, genes);
     let steps = 0;
     const timer = setInterval(() => {
       creature.update(IA_CONFIG.fixedDelta);
-      steps++;
-      if (steps > IA_CONFIG.maxSteps / 2) clearInterval(timer);
+      const x = creature.body.position.x;
+      const left = Math.max(0, x - 300);
+      Render.lookAt(visual.render, { min: { x: left, y: 0 }, max: { x: left + window.innerWidth, y: window.innerHeight } });
+      steps += 1;
+      if (steps > 180) clearInterval(timer);
     }, IA_CONFIG.fixedDelta);
   }
 
   function loop() {
     if (!running) return;
-    const perFrame = optionsRef.value.fastMode ? 2 : 1;
-    for (let i = 0; i < perFrame; i++) runGeneration();
-    if (statsRef.value.generation < IA_CONFIG.maxGenerations) requestAnimationFrame(loop);
-    else running = false;
+    runGeneration();
+    if (running) requestAnimationFrame(loop);
   }
 
   resetPopulation();
-
   return {
     start() { if (!running) { running = true; loop(); } },
     pause() { running = false; },
     reset() { running = false; resetPopulation(); },
     step() { runGeneration(); },
-    showBestNow() { if (statsRef.value.bestGenes) renderBest(population[0]?.genes ?? randomChromosome()); },
+    showBestNow() { if (bestEver) renderBest(bestEver.genes); },
   };
 }

@@ -4,6 +4,7 @@ const { Engine, Render, Runner } = Matter;
 
 export function createWorld({ headless = false } = {}) {
   const engine = Engine.create();
+  engine.gravity.y = 1.05;
   let render = null;
   let runner = null;
 
@@ -12,7 +13,12 @@ export function createWorld({ headless = false } = {}) {
     render = Render.create({
       canvas,
       engine,
-      options: { width: window.innerWidth, height: window.innerHeight, wireframes: false, background: '#222' },
+      options: {
+        width: window.innerWidth,
+        height: window.innerHeight,
+        wireframes: false,
+        background: '#f5f7fb',
+      },
     });
     Render.run(render);
     runner = Runner.create();
