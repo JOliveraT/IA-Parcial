@@ -15,4 +15,6 @@ export const IA_CONFIG = {
   hillClimbSigma: 0.02,
   goalX: 1000,
   startX: 100,
+  bestReplaySteps: 180,
+  generationReplayPauseMs: 300,
 };
