@@ -12,6 +12,8 @@ const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const lerp = (a, b, t) => a + (b - a) * t;
 
 const creature = new Creature();
+const L = creature.cfg.femur;
+const T = creature.cfg.tibia;
 
 function samplePose(genes, time) {
   const n = CHROMOSOME_LAYOUT.KEYFRAME_COUNT;
@@ -31,74 +33,109 @@ function samplePose(genes, time) {
   };
 }
 
+function legVector(bodyPitch, hip, knee) {
+  const thighAng = bodyPitch + Math.PI / 2 + hip;
+  const shinAng = thighAng + knee;
+  return { x: Math.cos(thighAng) * L + Math.cos(shinAng) * T, y: Math.sin(thighAng) * L + Math.sin(shinAng) * T };
+}
+
 function runAttempt(chromosome, visual = false) {
   const genes = decodeChromosome(chromosome);
-  let state = { x: IA_CONFIG.startX, y: GROUND_Y - 118 + genes.bodyHeightBias, vX: 0, alive: true, t: 0 };
-  let prevFeet = null;
-  let bestX = state.x;
+  const duty = genes.dutyFactor;
+  let t = 0;
+  let stance = 'left';
+  const initialPose = samplePose(genes, 0);
+  const initialVec = legVector(initialPose.bodyPitch, initialPose.leftHip, initialPose.leftKnee);
+  let stanceFoot = { x: IA_CONFIG.startX + initialVec.x, y: GROUND_Y };
+  let prevPhase = 0;
+  let bestX = IA_CONFIG.startX;
   let aliveSteps = 0;
+  let validSteps = 0;
   let stagnation = 0;
   let invalidPosePenalty = 0;
+  let footSlipPenalty = 0;
   let energyPenalty = 0;
-  let contactSum = 0;
-  let altSum = 0;
+  let alternationGood = 0;
+  let alternationTotal = 0;
+  let stanceQuality = 0;
   const frames = [];
 
   for (let step = 0; step < IA_CONFIG.maxSteps; step += 1) {
-    const pose = samplePose(genes, state.t);
-    const points = creature.getPosePoints({ ...state, pose });
-    const leftTouch = Math.abs(points.left.foot.y - GROUND_Y) < 8;
-    const rightTouch = Math.abs(points.right.foot.y - GROUND_Y) < 8;
-    const leftDx = prevFeet ? points.left.foot.x - prevFeet.left.x : 0;
-    const rightDx = prevFeet ? points.right.foot.x - prevFeet.right.x : 0;
+    const phase = (t % genes.cycleDuration) / genes.cycleDuration;
+    const desiredStance = phase < duty ? 'left' : 'right';
+    const pose = samplePose(genes, t);
 
-    let push = 0;
-    if (leftTouch) push += Math.max(0, -leftDx);
-    if (rightTouch) push += Math.max(0, -rightDx);
-    state.vX += push * genes.pushScale * 0.16;
-    state.vX *= 0.92;
-    state.vX = clamp(state.vX, -0.6, 3.2);
-    state.x += state.vX;
+    if (desiredStance !== stance) {
+      const prevPoints = creature.getPosePoints({ x: bestX, y: GROUND_Y - 120, pose });
+      const swingFoot = desiredStance === 'left' ? prevPoints.left.foot : prevPoints.right.foot;
+      const nearGround = Math.abs(swingFoot.y - GROUND_Y) < 16;
+      const validReach = Math.abs(swingFoot.x - stanceFoot.x) > 8;
+      alternationTotal += 1;
+      if (nearGround && validReach) {
+        stance = desiredStance;
+        stanceFoot = { x: swingFoot.x, y: GROUND_Y };
+        validSteps += 1;
+        alternationGood += 1;
+      } else {
+        invalidPosePenalty += 30;
+      }
+    }
+
+    const stanceVec = stance === 'left'
+      ? legVector(pose.bodyPitch, pose.leftHip, pose.leftKnee)
+      : legVector(pose.bodyPitch, pose.rightHip, pose.rightKnee);
+
+    const x = stanceFoot.x - stanceVec.x;
+    const y = stanceFoot.y - stanceVec.y - genes.hipHeightBias;
+
+    const points = creature.getPosePoints({ x, y, pose });
+    const stanceFootNow = stance === 'left' ? points.left.foot : points.right.foot;
+    footSlipPenalty += Math.abs(stanceFootNow.x - stanceFoot.x) * 2.2;
+    stanceQuality += clamp(1 - Math.abs(stanceFootNow.x - stanceFoot.x) / 12, 0, 1);
 
     const torsoBottom = Math.max(...points.torso.map((p) => p.y));
-    const badTilt = Math.abs(pose.bodyPitch) > 0.58;
-    const legsCrossed = points.left.foot.x > points.right.foot.x + 10;
-    const noContact = !leftTouch && !rightTouch;
-    const stall = state.x <= bestX + 0.02;
-    if (stall) stagnation += 1; else stagnation = 0;
+    const hipsGap = Math.abs(points.hipL.x - points.hipR.x);
+    const legsCrossed = (points.left.knee.x - points.right.knee.x) * (points.left.foot.x - points.right.foot.x) < -20;
 
-    const alternation = leftTouch !== rightTouch ? 1 : 0.15;
-    const contactQuality = (leftTouch || rightTouch) ? clamp(push / 2.6, 0, 1) : 0;
-    altSum += alternation;
-    contactSum += contactQuality;
-    energyPenalty += (Math.abs(pose.leftHip) + Math.abs(pose.rightHip) + pose.leftKnee + pose.rightKnee) * 0.03;
+    if (Math.abs(pose.bodyPitch) > 0.62) invalidPosePenalty += 20;
+    if (torsoBottom >= GROUND_Y - 2) invalidPosePenalty += 28;
+    if (torsoBottom < GROUND_Y - 210) invalidPosePenalty += 8;
+    if (legsCrossed) invalidPosePenalty += 25;
+    if (hipsGap < 8) invalidPosePenalty += 5;
 
-    if (legsCrossed) invalidPosePenalty += 8;
-    if (torsoBottom >= GROUND_Y - 4) invalidPosePenalty += 10;
-    if (noContact) invalidPosePenalty += 0.7;
-    bestX = Math.max(bestX, state.x);
+    energyPenalty += (Math.abs(pose.leftHip) + Math.abs(pose.rightHip) + pose.leftKnee + pose.rightKnee) * 0.02;
 
-    const failed = badTilt || torsoBottom >= GROUND_Y + 2 || stagnation > 140 || invalidPosePenalty > 1600;
+    bestX = Math.max(bestX, x);
+    if (bestX <= x + 0.02) stagnation += 1; else stagnation = 0;
+
+    const failed = torsoBottom >= GROUND_Y + 4 || invalidPosePenalty > 1400 || stagnation > 170;
+    const done = x >= IA_CONFIG.goalX;
     aliveSteps = step + 1;
 
-    if (visual) frames.push({ x: state.x, y: state.y, pose, points, failed, done: state.x >= IA_CONFIG.goalX });
-    prevFeet = { left: { ...points.left.foot }, right: { ...points.right.foot } };
+    if (visual) frames.push({ x, y, pose, points, failed, done, stanceLeg: stance, stanceFoot: { ...stanceFoot } });
+    if (failed || done) break;
 
-    if (failed || state.x >= IA_CONFIG.goalX) {
-      state.alive = !failed;
-      break;
-    }
-    state.t += IA_CONFIG.fixedDeltaSeconds;
+    prevPhase = phase;
+    t += IA_CONFIG.fixedDeltaSeconds;
   }
 
   const distance = Math.max(0, bestX - IA_CONFIG.startX);
-  const failed = !state.alive;
-  const contactQualityAverage = contactSum / Math.max(1, aliveSteps);
-  const alternationScore = altSum / Math.max(1, aliveSteps);
-  const stagnationPenalty = stagnation * 2.2;
-  const reachedGoal = !failed && bestX >= IA_CONFIG.goalX;
+  const failed = aliveSteps < IA_CONFIG.maxSteps && (frames.at(-1)?.failed ?? false);
+  const reachedGoal = bestX >= IA_CONFIG.goalX;
 
-  const fitness = computeFitness({ validDistance: distance, aliveSteps, contactQualityAverage, alternationScore, reachedGoal, failed, stagnationPenalty, energyPenalty, invalidPosePenalty });
+  const fitness = computeFitness({
+    validDistance: distance,
+    validSteps,
+    stanceQuality: stanceQuality / Math.max(1, aliveSteps),
+    alternationQuality: alternationGood / Math.max(1, alternationTotal),
+    reachedGoal,
+    failed,
+    footSlipPenalty,
+    stagnationPenalty: stagnation * 2,
+    invalidPosePenalty,
+    energyPenalty,
+  });
+
   return { chromosome: [...chromosome], genes, fitness, distance, failed, reachedGoalFinal: reachedGoal, frames };
 }
 
@@ -146,10 +183,13 @@ export function createSimulation(statsRef) {
     const sx = (x) => x - cameraX;
     ctx.fillStyle = '#f4a261'; ctx.strokeStyle = '#1f2937'; ctx.lineWidth = 2;
     ctx.beginPath(); frame.points.torso.forEach((p, i) => i ? ctx.lineTo(sx(p.x), p.y) : ctx.moveTo(sx(p.x), p.y)); ctx.closePath(); ctx.fill(); ctx.stroke();
-    const drawLeg = (hip, knee, foot, c) => { ctx.strokeStyle = c; ctx.lineWidth = 8; ctx.beginPath(); ctx.moveTo(sx(hip.x), hip.y); ctx.lineTo(sx(knee.x), knee.y); ctx.stroke(); ctx.lineWidth = 7; ctx.beginPath(); ctx.moveTo(sx(knee.x), knee.y); ctx.lineTo(sx(foot.x), foot.y); ctx.stroke(); };
-    drawLeg(frame.points.hipL, frame.points.left.knee, frame.points.left.foot, '#264653');
-    drawLeg(frame.points.hipR, frame.points.right.knee, frame.points.right.foot, '#2a9d8f');
-    [frame.points.hipL, frame.points.hipR, frame.points.left.knee, frame.points.right.knee].forEach((j) => { ctx.fillStyle = '#111827'; ctx.beginPath(); ctx.arc(sx(j.x), j.y, 4, 0, Math.PI * 2); ctx.fill(); });
+    const drawLeg = (hip, knee, foot, c, stanceLeg) => {
+      ctx.strokeStyle = c; ctx.lineWidth = 9; ctx.beginPath(); ctx.moveTo(sx(hip.x), hip.y); ctx.lineTo(sx(knee.x), knee.y); ctx.stroke();
+      ctx.lineWidth = 8; ctx.beginPath(); ctx.moveTo(sx(knee.x), knee.y); ctx.lineTo(sx(foot.x), foot.y); ctx.stroke();
+      if (stanceLeg) { ctx.fillStyle = '#111827'; ctx.fillRect(sx(foot.x) - 7, GROUND_Y - 3, 14, 6); }
+    };
+    drawLeg(frame.points.hipL, frame.points.left.knee, frame.points.left.foot, '#264653', frame.stanceLeg === 'left');
+    drawLeg(frame.points.hipR, frame.points.right.knee, frame.points.right.foot, '#2a9d8f', frame.stanceLeg === 'right');
   };
 
   const loop = () => {
