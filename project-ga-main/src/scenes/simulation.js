@@ -9,8 +9,10 @@ import { Creature } from '../physics/creature';
 
 const GROUND_Y = 480;
 const CONTACT_THRESHOLD = 12;
-const GROUND_PENETRATION_FAIL_PX = 15;
-const GROUND_PENETRATION_PENALTY = 10;
+const MINOR_GROUND_PENETRATION_PX = 5;
+const MODERATE_GROUND_PENETRATION_PX = 15;
+const SEVERE_GROUND_PENETRATION_PX = 24;
+const INITIAL_GROUND_GRACE_FRAMES = 20;
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const lerp = (a, b, t) => a + (b - a) * t;
 const PHASE = { EVAL: 'Evaluando', REPLAY: 'Reproduciendo mejor intento', RESET: 'Reiniciando' };
@@ -43,14 +45,47 @@ function legVector(bodyPitch, hip, knee) {
   return { x: Math.cos(thighAng) * L + Math.cos(shinAng) * T, y: Math.sin(thighAng) * L + Math.sin(shinAng) * T };
 }
 
+function classifyPenetration(penetration) {
+  if (penetration <= 0) return { level: 'none', penalty: 0, severe: false };
+  if (penetration <= MINOR_GROUND_PENETRATION_PX) return { level: 'minor', penalty: penetration * 0.9, severe: false };
+  if (penetration <= MODERATE_GROUND_PENETRATION_PX) return { level: 'moderate', penalty: 7 + penetration * 2.8, severe: false };
+  return { level: 'major', penalty: 30 + penetration * 8, severe: penetration >= SEVERE_GROUND_PENETRATION_PX };
+}
+
+function validateInitialPose(chromosome) {
+  const genes = decodeChromosome(chromosome);
+  const pose = samplePose(genes, 0);
+  const stance = 'left';
+  const stanceVec = legVector(pose.bodyPitch, pose.leftHip, pose.leftKnee);
+  const stanceFoot = { x: IA_CONFIG.startX + stanceVec.x, y: GROUND_Y };
+  const x = stanceFoot.x - stanceVec.x;
+  const y = stanceFoot.y - stanceVec.y - genes.hipHeightBias;
+  const points = creature.getPosePoints({ x, y, pose });
+  const leftPenetration = Math.max(0, points.left.foot.y - GROUND_Y);
+  const rightPenetration = Math.max(0, points.right.foot.y - GROUND_Y);
+  const swingPenetration = Math.max(0, points.right.foot.y - GROUND_Y);
+  const correctedY = y + Math.min(3, swingPenetration);
+  const correctedPoints = creature.getPosePoints({ x, y: correctedY, pose });
+  return {
+    stanceLeg: stance,
+    x,
+    y: correctedY,
+    pose,
+    leftFootY: correctedPoints.left.foot.y,
+    rightFootY: correctedPoints.right.foot.y,
+    leftPenetration: Math.max(0, correctedPoints.left.foot.y - GROUND_Y),
+    rightPenetration: Math.max(0, correctedPoints.right.foot.y - GROUND_Y),
+    reasonOfFailure: Math.max(leftPenetration, rightPenetration) > MODERATE_GROUND_PENETRATION_PX ? 'Pose inicial inválida por penetración excesiva' : null,
+  };
+}
+
 function runAttempt(chromosome, visual = false) {
   const genes = decodeChromosome(chromosome);
   const duty = genes.dutyFactor;
   let t = 0;
-  let stance = 'left';
-  const initialPose = samplePose(genes, 0);
-  const initialVec = legVector(initialPose.bodyPitch, initialPose.leftHip, initialPose.leftKnee);
-  let stanceFoot = { x: IA_CONFIG.startX + initialVec.x, y: GROUND_Y };
+  const initialState = validateInitialPose(chromosome);
+  let stance = initialState.stanceLeg;
+  let stanceFoot = { x: initialState.x + legVector(initialState.pose.bodyPitch, initialState.pose.leftHip, initialState.pose.leftKnee).x, y: GROUND_Y };
   let bestX = IA_CONFIG.startX;
   let aliveSteps = 0;
   let validSteps = 0;
@@ -63,7 +98,10 @@ function runAttempt(chromosome, visual = false) {
   let alternationGood = 0;
   let alternationTotal = 0;
   let stanceQuality = 0;
+  let moderatePenetrationCount = 0;
+  let reasonOfFailure = initialState.reasonOfFailure;
   const frames = [];
+  const debugState = { leftFootY: initialState.leftFootY, rightFootY: initialState.rightFootY, groundY: GROUND_Y, leftPenetration: initialState.leftPenetration, rightPenetration: initialState.rightPenetration, stanceLeg: stance, phase: 0, reasonOfFailure };
 
   for (let step = 0; step < IA_CONFIG.maxSteps; step += 1) {
     const phase = (t % genes.cycleDuration) / genes.cycleDuration;
@@ -87,7 +125,7 @@ function runAttempt(chromosome, visual = false) {
         invalidPosePenalty += 12;
         invalidGroundContactPenalty += 20;
         if (swingPenetration > 0) {
-          groundPenetrationPenalty += swingPenetration * GROUND_PENETRATION_PENALTY;
+          groundPenetrationPenalty += classifyPenetration(swingPenetration).penalty;
         }
       }
     }
@@ -109,9 +147,15 @@ function runAttempt(chromosome, visual = false) {
     const stancePenetration = Math.max(0, stanceFootNow.y - GROUND_Y);
     const swingPenetration = Math.max(0, swingFootNow.y - GROUND_Y);
     const maxPenetration = Math.max(stancePenetration, swingPenetration);
-    groundPenetrationPenalty += (stancePenetration + swingPenetration) * GROUND_PENETRATION_PENALTY;
-    if (stancePenetration > 0.25) invalidGroundContactPenalty += 45;
-    if (swingPenetration > 0.25) invalidGroundContactPenalty += 18;
+    const stanceClass = classifyPenetration(stancePenetration);
+    const swingClass = classifyPenetration(swingPenetration);
+    groundPenetrationPenalty += stanceClass.penalty + swingClass.penalty;
+    if (stanceClass.level === 'minor') invalidGroundContactPenalty += 1;
+    if (swingClass.level === 'minor') invalidGroundContactPenalty += 0.6;
+    if (stanceClass.level === 'moderate') { invalidGroundContactPenalty += 9; moderatePenetrationCount += 1; }
+    if (swingClass.level === 'moderate') { invalidGroundContactPenalty += 6; moderatePenetrationCount += 1; }
+    if (stanceClass.level === 'major') invalidGroundContactPenalty += 45;
+    if (swingClass.level === 'major') invalidGroundContactPenalty += 26;
 
     const torsoBottom = Math.max(...points.torso.map((p) => p.y));
     const hipsGap = Math.abs(points.hipL.x - points.hipR.x);
@@ -129,12 +173,31 @@ function runAttempt(chromosome, visual = false) {
     if (bestX <= x + 0.02) stagnation += 1; else stagnation = 0;
 
     const stagnated = aliveSteps > IA_CONFIG.minStepsBeforeStagnation && stagnation > 260;
+    const severePenetrationNow = stanceClass.severe || swingClass.severe;
+    const allowGroundGrace = step < INITIAL_GROUND_GRACE_FRAMES && !severePenetrationNow;
+    const penetrationFailure = !allowGroundGrace && (
+      maxPenetration > MODERATE_GROUND_PENETRATION_PX
+      || moderatePenetrationCount > 8
+    );
     const failed = torsoBottom >= GROUND_Y + 12
       || invalidPosePenalty > 2200
-      || maxPenetration > GROUND_PENETRATION_FAIL_PX
+      || penetrationFailure
       || stagnated;
+    if (!reasonOfFailure && failed) {
+      if (penetrationFailure) reasonOfFailure = `Violación del suelo (maxPenetration=${maxPenetration.toFixed(2)})`;
+      else if (torsoBottom >= GROUND_Y + 12) reasonOfFailure = 'Torso colisionó con suelo';
+      else if (stagnated) reasonOfFailure = 'Estancamiento';
+      else reasonOfFailure = 'Pose inválida';
+    }
     const done = x >= IA_CONFIG.goalX;
     aliveSteps = step + 1;
+    debugState.leftFootY = points.left.foot.y;
+    debugState.rightFootY = points.right.foot.y;
+    debugState.leftPenetration = stance === 'left' ? stancePenetration : swingPenetration;
+    debugState.rightPenetration = stance === 'right' ? stancePenetration : swingPenetration;
+    debugState.stanceLeg = stance;
+    debugState.phase = phase;
+    debugState.reasonOfFailure = reasonOfFailure;
 
     if (visual) {
       const visualPoints = {
@@ -156,8 +219,11 @@ function runAttempt(chromosome, visual = false) {
         failed,
         done,
         stanceLeg: stance,
+        phase,
         stanceFoot: { ...stanceFoot },
         penetratedGround: maxPenetration > 0.25,
+        reasonOfFailure,
+        debug: { ...debugState },
       });
     }
     if (failed || done) break;
@@ -185,7 +251,10 @@ function runAttempt(chromosome, visual = false) {
     energyPenalty,
   });
 
-  return { chromosome: [...chromosome], genes, fitness, distance, failed, reachedGoalFinal: reachedGoal, validSteps, aliveSteps, frames };
+  if (visual) {
+    console.debug('[runAttempt]', debugState);
+  }
+  return { chromosome: [...chromosome], genes, fitness, distance, failed, reachedGoalFinal: reachedGoal, validSteps, aliveSteps, frames, reasonOfFailure, debug: debugState };
 }
 
 export function validateWalkingSeed() {
@@ -196,6 +265,8 @@ export function validateWalkingSeed() {
     validSteps: result.validSteps,
     fell: result.failed,
     fitness: Number(result.fitness.toFixed(2)),
+    aliveSteps: result.aliveSteps,
+    reasonOfFailure: result.reasonOfFailure,
   };
 }
 
@@ -281,6 +352,11 @@ export function createSimulation(statsRef) {
         ctx.font = 'bold 16px sans-serif';
         ctx.fillText('Fallo: penetración del suelo', 18, 36);
       }
+      if (frame.reasonOfFailure) {
+        ctx.fillStyle = '#111827';
+        ctx.font = '14px sans-serif';
+        ctx.fillText(`Razón: ${frame.reasonOfFailure}`, 18, 58);
+      }
       if (replay.idx < replay.frames.length - 1) replay.idx += 1;
       else {
         replay.wait += 16;
@@ -314,6 +390,15 @@ export function createSimulation(statsRef) {
     pause() { running = false; statsRef.value = { ...statsRef.value, status: 'Pausado' }; },
     reset() { resetPopulation(); },
     showBestNow() { if (shown) replay = { frames: runAttempt(shown.chromosome, true).frames, idx: 0, wait: 0 }; },
-    showWalkingSeed() { replay = { frames: runAttempt(createWalkingSeed(), true).frames, idx: 0, wait: 0 }; },
+    showWalkingSeed() {
+      const seedAttempt = runAttempt(createWalkingSeed(), true);
+      statsRef.value = {
+        ...statsRef.value,
+        status: `Marcha base - dist ${seedAttempt.distance.toFixed(1)} | pasos ${seedAttempt.validSteps} | ${seedAttempt.reasonOfFailure ?? 'sin fallo temprano'}`,
+        replayLabel: 'Marcha base',
+        phase: PHASE.REPLAY,
+      };
+      replay = { frames: seedAttempt.frames, idx: 0, wait: 0 };
+    },
   };
 }
